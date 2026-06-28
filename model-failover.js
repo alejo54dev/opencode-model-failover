@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  *	model-failover.js
  *
@@ -289,6 +288,16 @@ export default async function plugin( { client } )
 				await client.session.abort( { path : { id : sessionID } } ) ;
 			}
 			catch {}
+
+			// Re-prompt the session with the fallback model
+			try
+			{
+				await client.session.prompt( {
+					path : { id : sessionID },
+					body : { parts : [ { type : "text", text : "Continue." } ] }
+				} ) ;
+			}
+			catch {}
 		}
 		finally
 		{
@@ -353,7 +362,17 @@ export default async function plugin( { client } )
 			}
 
 			if ( ! message || ! sessionID ) return ;
-			if ( ! isPermanent( message ) ) return ;
+
+			let isFailoverSignal = isPermanent( message ) ;
+
+			// Status code 401/402/403 always trigger failover regardless of message
+			if ( ! isFailoverSignal && event.type === "session.error" )
+			{
+				const sc = event.properties?.error?.data?.statusCode ;
+				isFailoverSignal = sc === 401 || sc === 402 || sc === 403 ;
+			}
+
+			if ( ! isFailoverSignal ) return ;
 
 			const s = ensureSession( sessionID ) ;
 
@@ -397,14 +416,26 @@ export default async function plugin( { client } )
 
 			if ( ! s.failoverModel ) return ;
 
-			// User changed model manually — clear failover
+			// Incoming model matches original (currentModel) — apply override below
+			// Incoming model matches failoverModel — already switched, nothing to do
+			// Neither — user manually changed model, clear failover
 			if (
-				input.model.providerID !== s.failoverModel.providerID ||
-				input.model.modelID !== s.failoverModel.modelID
+				input.model.providerID !== s.currentModel.providerID ||
+				input.model.modelID !== s.currentModel.modelID
 			)
 			{
-				log.info( `user override, clearing failover for ${ input.sessionID }` ) ;
-				s.failoverModel = undefined ;
+				if (
+					input.model.providerID !== s.failoverModel.providerID ||
+					input.model.modelID !== s.failoverModel.modelID
+				)
+				{
+					log.info( `user override, clearing failover for ${ input.sessionID }` ) ;
+					s.failoverModel = undefined ;
+					s.currentModel = {
+						providerID : input.model.providerID,
+						modelID : input.model.modelID
+					} ;
+				}
 
 				return ;
 			}
@@ -415,11 +446,6 @@ export default async function plugin( { client } )
 				providerID : s.failoverModel.providerID,
 				modelID : s.failoverModel.modelID
 			} ;
-
-			if ( s.failoverModel.variant )
-			{
-				output.message.variant = s.failoverModel.variant ;
-			}
 
 			output.message.summary = output.message.summary ?? { diffs : [ ] } ;
 			output.message.summary.body = `✅ Failover: ${ modelKey( s.failoverModel ) }${ s.failoverModel.variant ? ` (${ s.failoverModel.variant })` : "" }` ;

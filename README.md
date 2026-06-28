@@ -4,7 +4,7 @@ Automatic model failover plugin for [OpenCode](https://opencode.ai). Detects per
 
 ## What it does
 
-When the active model fails with a permanent error (quota exceeded, billing, auth) the plugin immediately aborts the session to skip OpenCode's retry countdown, picks the next eligible fallback, sends a minimal "Continue." re-prompt so the new model picks up the task using the existing conversation context, and logs every decision. Notifications appear in the output via `client.app.log` (like DCP). Users can switch models manually with `/models` at any time.
+When the active model fails with a permanent error (quota exceeded, billing, auth) the plugin immediately aborts the session to skip OpenCode's retry countdown, picks the next eligible fallback, sends a minimal "Continue." re-prompt so the new model picks up the task using the existing conversation context, and logs every decision. Notifications appear in the output message summary. Users can switch models manually with `/models` at any time.
 
 ## Install
 
@@ -13,12 +13,6 @@ cp model-failover.js ~/.config/opencode/plugins/model-failover.js
 ```
 
 No npm, no build step, no dependencies.
-
-## Update
-
-```bash
-cp model-failover.js ~/.config/opencode/plugins/model-failover.js
-```
 
 ## Disable
 
@@ -55,13 +49,11 @@ Or set `"enabled": false` in the config.
 
 ## Logs
 
-`~/.config/opencode/model-failover.log` (append-only):
+`~/.config/opencode/model-failover.log` (append-only). Format: `[ISO_TIMESTAMP] [LEVEL] [model-failover] message`.
 
 ```bash
 tail -f ~/.config/opencode/model-failover.log
 ```
-
-Format: `[ISO_TIMESTAMP] [LEVEL] [model-failover] message`. Levels are full words: `ERROR`, `INFO`, `DEBUG`.
 
 ## Behavior
 
@@ -80,6 +72,7 @@ Format: `[ISO_TIMESTAMP] [LEVEL] [model-failover] message`. Levels are full word
 |---|---|
 | `model-failover.js` | The plugin. Single ESM file, zero dependencies. |
 | `README.md` | This file. |
+| `AGENTS.md` | AI agent context. |
 
 ## License
 
