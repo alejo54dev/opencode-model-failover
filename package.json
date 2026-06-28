@@ -1,0 +1,44 @@
+{
+	"name": "opencode-model-failover",
+	"version": "1.0.0",
+	"description": "Automatic model failover for OpenCode — switches to fallback models on rate limits, auth errors, and quota exhaustion",
+	"type": "module",
+	"main": "dist/index.js",
+	"types": "dist/index.d.ts",
+	"opencode-plugin": true,
+	"author": "Alejandro Carraretto",
+	"license": "MIT",
+	"files": [
+		"dist"
+	],
+	"scripts": {
+		"build": "tsup",
+		"typecheck": "tsc --noEmit"
+	},
+	"keywords": [
+		"opencode",
+		"opencode-plugin",
+		"failover",
+		"fallback",
+		"model-switching",
+		"rate-limit",
+		"error-recovery"
+	],
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/alejo54dev/opencode-model-failover.git"
+	},
+	"bugs": {
+		"url": "https://github.com/alejo54dev/opencode-model-failover/issues"
+	},
+	"homepage": "https://github.com/alejo54dev/opencode-model-failover#readme",
+	"peerDependencies": {
+		"@opencode-ai/plugin": ">=1.0.0"
+	},
+	"devDependencies": {
+		"@opencode-ai/plugin": "^1.0.0",
+		"@types/node": "^22.0.0",
+		"tsup": "^8.5.1",
+		"typescript": "^5.0.0"
+	}
+}
