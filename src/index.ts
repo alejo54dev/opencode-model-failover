@@ -16,6 +16,9 @@ interface SessionState
 {
 	failoverInProgress: boolean
 	createdAt: number
+	userModel?: ModelRef
+	originalModel?: ModelRef
+	failoverModel?: ModelRef
 }
 
 interface ModelRef
@@ -28,7 +31,6 @@ const CLEANUP_INTERVAL_MS = 5 * 60 * 1000
 
 const sessions = new Map<string, SessionState>()
 const modelCooldowns = new Map<string, number>()
-const failoverModels = new Map<string, ModelRef>()
 
 function ensureSession(sessionID: string): SessionState
 {
@@ -175,7 +177,14 @@ async function executeFailover(
 	if (s.failoverInProgress) return
 
 	s.failoverInProgress = true
-	failoverModels.delete(sessionID)
+
+	if (s.userModel)
+	{
+		s.originalModel = { ...s.userModel }
+	}
+
+	s.failoverModel = undefined
+
 	try
 	{
 		await abort(sessionID, client)
@@ -193,7 +202,7 @@ async function executeFailover(
 		if (succeeded)
 		{
 			const key = modelKey(succeeded.providerID, succeeded.modelID)
-			failoverModels.set(sessionID, succeeded)
+			s.failoverModel = succeeded
 			log("info", `failover to ${key}`)
 			console.warn(`✅ failover to ${key}`)
 		}
@@ -243,7 +252,6 @@ export default (async ({ client }) =>
 				if (props.info?.id)
 				{
 					sessions.delete(props.info.id)
-					failoverModels.delete(props.info.id)
 				}
 				return
 			}
@@ -330,12 +338,33 @@ export default (async ({ client }) =>
 
 		"chat.message": async (input, output) =>
 		{
-			const m = failoverModels.get(input.sessionID)
-			if (m)
+			if (!input.sessionID) return
+
+			const s = ensureSession(input.sessionID)
+
+			if (input.model)
 			{
-				log("debug", `override model for session ${input.sessionID}: ${modelKey(m.providerID, m.modelID)}`)
-				output.message.model = { providerID: m.providerID, modelID: m.modelID }
+				s.userModel = { providerID: input.model.providerID, modelID: input.model.modelID }
 			}
+
+			if (!s.failoverModel) return
+
+			if (s.originalModel && input.model)
+			{
+				const isOriginal = input.model.providerID === s.originalModel.providerID
+					&& input.model.modelID === s.originalModel.modelID
+
+				if (!isOriginal)
+				{
+					log("info", `user changed model, clearing failover for session ${input.sessionID}`)
+					s.failoverModel = undefined
+					s.originalModel = undefined
+					return
+				}
+			}
+
+			log("debug", `override model for session ${input.sessionID}: ${modelKey(s.failoverModel.providerID, s.failoverModel.modelID)}`)
+			output.message.model = { providerID: s.failoverModel.providerID, modelID: s.failoverModel.modelID }
 		},
 
 		dispose: async () =>
