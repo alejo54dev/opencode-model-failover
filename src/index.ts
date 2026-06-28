@@ -28,6 +28,7 @@ const CLEANUP_INTERVAL_MS = 5 * 60 * 1000
 
 const sessions = new Map<string, SessionState>()
 const modelCooldowns = new Map<string, number>()
+const failoverModels = new Map<string, ModelRef>()
 
 function ensureSession(sessionID: string): SessionState
 {
@@ -67,13 +68,11 @@ function isTransientError(msg: string): boolean
 	return TRANSIENT_ERROR_PATTERNS.some((p) => lower.includes(p))
 }
 
-type ErrorAction = "immediate" | "retry" | "ignore"
-
 function classify(
 	statusCode: number | undefined,
 	isRetryable: boolean | undefined,
 	message: string | undefined,
-): ErrorAction
+): "immediate" | "retry"
 {
 	if (statusCode !== undefined && IMMEDIATE_STATUS_CODES.has(statusCode))
 	{
@@ -96,7 +95,7 @@ function classify(
 
 	if (message && isTransientError(message)) return "retry"
 
-	return "ignore"
+	return "immediate"
 }
 
 async function abort(sessionID: string, client: PluginInput["client"]): Promise<void>
@@ -140,7 +139,7 @@ async function tryFallbackChain(
 	chain: ModelRef[],
 	cooldownMs: number,
 	client: PluginInput["client"],
-): Promise<boolean>
+): Promise<ModelRef | null>
 {
 	for (const model of chain)
 	{
@@ -154,7 +153,7 @@ async function tryFallbackChain(
 		if (await rePrompt(sessionID, model, client))
 		{
 			log("info", `fallback succeeded: ${modelKey(model.providerID, model.modelID)}`)
-			return true
+			return model
 		}
 
 		log("debug", `fallback failed: ${modelKey(model.providerID, model.modelID)}`)
@@ -162,7 +161,8 @@ async function tryFallbackChain(
 	}
 
 	log("error", `fallback chain exhausted`)
-	return false
+	console.warn(`❌ fallback chain exhausted for session ${sessionID}`)
+	return null
 }
 
 async function executeFailover(
@@ -175,6 +175,7 @@ async function executeFailover(
 	if (s.failoverInProgress) return
 
 	s.failoverInProgress = true
+	failoverModels.delete(sessionID)
 	try
 	{
 		await abort(sessionID, client)
@@ -187,7 +188,15 @@ async function executeFailover(
 		}
 
 		log("info", `starting failover for session ${sessionID}`)
-		await tryFallbackChain(sessionID, chain, config.cooldownMs, client)
+		const succeeded = await tryFallbackChain(sessionID, chain, config.cooldownMs, client)
+
+		if (succeeded)
+		{
+			const key = modelKey(succeeded.providerID, succeeded.modelID)
+			failoverModels.set(sessionID, succeeded)
+			log("info", `failover to ${key}`)
+			console.warn(`✅ failover to ${key}`)
+		}
 	}
 	finally
 	{
@@ -234,6 +243,7 @@ export default (async ({ client }) =>
 				if (props.info?.id)
 				{
 					sessions.delete(props.info.id)
+					failoverModels.delete(props.info.id)
 				}
 				return
 			}
@@ -315,6 +325,16 @@ export default (async ({ client }) =>
 
 				log("error", `unknown retry status (session ${props.sessionID}): ${props.status.message}`)
 				await executeFailover(props.sessionID, config, client)
+			}
+		},
+
+		"chat.message": async (input, output) =>
+		{
+			const m = failoverModels.get(input.sessionID)
+			if (m)
+			{
+				log("debug", `override model for session ${input.sessionID}: ${modelKey(m.providerID, m.modelID)}`)
+				output.message.model = { providerID: m.providerID, modelID: m.modelID }
 			}
 		},
 

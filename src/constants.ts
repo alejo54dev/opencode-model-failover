@@ -14,11 +14,11 @@ export const PERMANENT_ERROR_PATTERNS: readonly string[] = [
 	"insufficient quota",
 	"payment required",
 	"subscription",
+	"rate limit",
+	"too many requests",
 ]
 
 export const TRANSIENT_ERROR_PATTERNS: readonly string[] = [
-	"rate limit",
-	"too many requests",
 	"overloaded",
 	"capacity exceeded",
 	"econnrefused",
