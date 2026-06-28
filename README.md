@@ -1,54 +1,100 @@
 # opencode-model-failover
 
-Automatic model failover plugin for [OpenCode](https://opencode.ai). Detects model failures (rate limits, auth errors, quota exhaustion, network errors) and switches to a configurable chain of fallback models.
+Automatic model failover plugin for [OpenCode](https://opencode.ai). Detects model failures (rate limits, quota exhaustion, auth errors, network errors) and switches the active session to the next model in a configurable chain, transparently and unattended.
 
-## Installation
+## What it does
 
-### From npm (when published)
+When the active model fails with a permanent error (quota exceeded, billing, auth) the plugin immediately switches to the next eligible fallback. When the error is transient (overload, network) it waits for `maxRetries` attempts before switching. Every decision is logged, a TUI toast is shown, and the next user message is silently routed to the new model with a `⬆️ Failover` summary so the swap is visible without being noisy.
+
+## Install
+
+Drop the single file into your OpenCode plugins directory:
 
 ```bash
-opencode plugin -g opencode-model-failover
+cp model-failover.js ~/.config/opencode/plugins/model-failover.js
 ```
 
-### Local (development)
+OpenCode picks it up on next start. No npm, no build step, no dependencies.
 
-OpenCode discovers plugins via glob `{plugin,plugins}/*.{ts,js}` — files must be directly in the plugins directory, not in subdirectories.
+## Update
 
 ```bash
-bun run deploy   # builds + copies to ~/.config/opencode/plugins/model-failover.js
+cp model-failover.js ~/.config/opencode/plugins/model-failover.js
+```
+
+Or, if you cloned the repo:
+
+```bash
+git pull && cp model-failover.js ~/.config/opencode/plugins/model-failover.js
+```
+
+## Disable
+
+Set `"enabled": false` in the config, or rename the plugin file:
+
+```bash
+mv ~/.config/opencode/plugins/model-failover.js{,.disabled}
 ```
 
 ## Configuration
 
-Create `~/.config/opencode/model-failover.json`:
+`~/.config/opencode/model-failover.json`:
 
 ```json
 {
-  "enabled": true,
-  "fallbackChain": [
-    "openai/gpt-4o",
-    "anthropic/claude-3-opus",
-    "google/gemini-2.5-pro"
-  ],
-  "maxRetries": 2,
-  "cooldownMs": 30000
+	"enabled": true,
+	"fallbackChain":
+	[
+		{ "model": "opencode-go/deepseek-v4-flash", "variant": "max" },
+		{ "model": "opencode-go/deepseek-v4-pro", "variant": "medium" },
+		{ "model": "deepseek/deepseek-v4-flash-free", "variant": "max" }
+	],
+	"maxRetries": 2,
+	"cooldownMs": 30000,
+	"logLevel": "info",
+	"healthCheck": false
 }
 ```
 
 | Option | Type | Default | Description |
-|---|---|---|---|---|
-| `enabled` | `boolean` | `true` | Enable/disable the plugin |
-| `fallbackChain` | `string[]` | `[]` | Ordered list of fallback models (`provider/model`) |
-| `maxRetries` | `number` | `2` | Max retry attempts for transient errors |
-| `cooldownMs` | `number` | `30000` | Cooldown period after a model fails (ms) |
-| `logLevel` | `string` | `"info"` | Log level: `"error"`, `"info"`, or `"debug"` |
+|---|---|---|---|
+| `enabled` | `boolean` | `true` | Master switch. |
+| `fallbackChain` | `object[]` | `[]` | Ordered fallback entries `{ model, variant? }` where `model` is `"providerID/modelID"`. |
+| `maxRetries` | `number` | `2` | Auto-retries for transient errors before failover. |
+| `cooldownMs` | `number` | `30000` | How long a failed model stays marked as unusable (ms). |
+| `logLevel` | `string` | `"info"` | `"error"`, `"info"`, or `"debug"`. |
+| `healthCheck` | `boolean` | `false` | Reserved. Currently ignored; pick is decided on cooldown state only. |
 
-## How it works
+## Logs
 
-1. **Error classification** — Errors are classified as permanent (auth, quota, billing) or transient (rate limits, network, server errors)
-2. **Retry with backoff** — Transient errors are retried up to `maxRetries` times with exponential backoff
-3. **Fallback chain** — Permanent errors or exhausted retries trigger failover to the next model in the chain
-4. **Cooldown protection** — Failed models enter cooldown (`cooldownMs`); sessions expire after 10 minutes of inactivity
+`~/.config/opencode/model-failover.log` (append-only):
+
+```bash
+tail -f ~/.config/opencode/model-failover.log
+```
+
+Format: `[ISO_TIMESTAMP] [LEVEL] [model-failover] message`.
+
+## Behavior
+
+| Event | Reaction |
+|---|---|
+| `session.status` retry with permanent error message | Immediate failover, skip OpenCode countdown. |
+| `session.status` retry with transient error, `attempt < maxRetries` | Wait. |
+| `session.status` retry with transient error, `attempt >= maxRetries` | Failover. |
+| `session.error` with 401 / 402 / 403 | Immediate failover. |
+| `session.error` with 429 / 5xx | Failover (already retried by OpenCode). |
+| Next `chat.message` after failover | Model silently overridden, summary tagged `⬆️ Failover: A → B`. |
+| User picks a third model (not original, not failover) | Failover cleared, new model becomes original. |
+| All fallbacks in cooldown or chain empty | Toast `Fallback chain exhausted`, session left as is. |
+
+## Files
+
+| File | Purpose |
+|---|---|
+| `model-failover.js` | The plugin. Single ESM file, zero dependencies. |
+| `README.md` | This file. |
+| `.gitignore` | `node_modules/`, `dist/`, logs, editor swap. |
 
 ## License
 

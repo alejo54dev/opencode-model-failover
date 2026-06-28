@@ -6,3 +6,5 @@ dist/
 .DS_Store
 *.swp
 *.swo
+
+.handoff/
