@@ -40,8 +40,12 @@ export function loadConfig(): FailoverConfig
 			fallbackChain: Array.isArray(raw.fallbackChain)
 				? raw.fallbackChain.filter((e): e is string => typeof e === "string")
 				: DEFAULT_CONFIG.fallbackChain,
-			maxRetries: typeof raw.maxRetries === "number" ? raw.maxRetries : DEFAULT_CONFIG.maxRetries,
-			cooldownMs: typeof raw.cooldownMs === "number" ? raw.cooldownMs : DEFAULT_CONFIG.cooldownMs,
+			maxRetries: typeof raw.maxRetries === "number"
+				? Math.max(0, Math.floor(raw.maxRetries))
+				: DEFAULT_CONFIG.maxRetries,
+			cooldownMs: typeof raw.cooldownMs === "number"
+				? Math.max(0, Math.floor(raw.cooldownMs))
+				: DEFAULT_CONFIG.cooldownMs,
 		}
 	}
 	catch
@@ -55,7 +59,7 @@ export function parseModel(spec: string): { providerID: string; modelID: string 
 	const idx = spec.indexOf("/")
 	if (idx === -1)
 	{
-		return { providerID: spec, modelID: spec }
+		return { providerID: "", modelID: spec }
 	}
 	return {
 		providerID: spec.substring(0, idx),
