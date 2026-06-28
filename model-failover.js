@@ -157,13 +157,32 @@ function createMatcher( patterns )
 	return ( msg ) => lower.some( ( p ) => msg.toLowerCase().includes( p ) ) ;
 }
 
+function displayModelID( ref )
+{
+	return ref.modelID + (ref.variant ? `:${ ref.variant }` : "") ;
+}
+
+function formatDisplayModel( ref )
+{
+	return {
+		providerID : ref.providerID,
+		modelID : ref.modelID,
+		variant : ref.variant
+	} ;
+}
+
+function formatModelLabel( ref )
+{
+	return `${ ref.providerID }/${ displayModelID( ref ) }` ;
+}
+
 // ── Plugin ─────────────────────────────────────────────
 
 /**
  *	@typedef {{ providerID:string, modelID:string }} ModelRef
  *	@typedef {{ providerID:string, modelID:string, variant?:string }} ModelRefWithVariant
  *	@typedef {{ model:string, variant?:string }} FallbackEntry
- *	@typedef {{ currentModel?:ModelRef, failoverModel?:ModelRefWithVariant, failoverError?:string, failoverInProgress:boolean }} SessionState
+ *	@typedef {{ currentModel?:ModelRefWithVariant, failoverModel?:ModelRefWithVariant, failoverError?:string, failoverInProgress:boolean }} SessionState
  */
 
 export default async function plugin( { client } )
@@ -278,6 +297,10 @@ export default async function plugin( { client } )
 				variant : next.variant
 			} ;
 
+			// Prevent reselecting this fallback if it also fails
+			cooldowns.set( modelKey( base ), Date.now() + config.cooldownMs ) ;
+			log.debug( `cooldown ${ modelKey( base ) } ${ config.cooldownMs }ms` ) ;
+
 			const from = modelKey( current ) ;
 			const to = modelKey( base ) ;
 
@@ -292,10 +315,55 @@ export default async function plugin( { client } )
 			// Re-prompt the session with the fallback model
 			try
 			{
+				const label = formatModelLabel( s.failoverModel ) ;
+
 				await client.session.prompt( {
 					path : { id : sessionID },
-					body : { parts : [ { type : "text", text : "Continue." } ] }
+					body : {
+						model : {
+							providerID : base.providerID,
+							modelID : base.modelID,
+							variant : next.variant
+						},
+						parts : [
+							{ type : "text", text : `✅ Failover to ${ label }`, ignored : true },
+							{ type : "text", text : "Continue." }
+						]
+					}
 				} ) ;
+			}
+			catch
+			{
+				log.error( `re-prompt failed for ${ sessionID }` ) ;
+			}
+
+			// Update global config model so the UI selector reflects the change
+			// in both plan and build modes.
+			try
+			{
+				const modelStr = `${ base.providerID }/${ base.modelID }` ;
+
+				const configBody = { model : modelStr } ;
+
+				// Also update per-agent models so the selector changes in both
+				// plan and build modes regardless of per-agent overrides.
+				try
+				{
+					const cur = await client.config.get() ;
+					const agent = { ...( cur.agent ?? {} ) } ;
+
+					agent.plan = { ...agent.plan, model : modelStr, variant : next.variant } ;
+					agent.build = { ...agent.build, model : modelStr, variant : next.variant } ;
+					configBody.agent = agent ;
+				}
+				catch
+				{
+					log.debug( "config.get unavailable, top-level only" ) ;
+				}
+
+				await client.config.update( { body : configBody } ) ;
+
+				log.debug( `config model set to ${ modelStr }` ) ;
 			}
 			catch {}
 		}
@@ -401,60 +469,80 @@ export default async function plugin( { client } )
 			{
 				s.currentModel = {
 					providerID : input.model.providerID,
-					modelID : input.model.modelID
+					modelID : input.model.modelID,
+					variant : input.model.variant
 				} ;
 			}
 
-			// Show chain-exhausted warning
-			if ( s.failoverError )
-			{
-				output.message.summary = output.message.summary ?? { diffs : [ ] } ;
-				output.message.summary.body = s.failoverError ;
+		// Show chain-exhausted warning
+		if ( s.failoverError )
+		{
+			output.parts.push( { type : "text", text : s.failoverError, ignored : true } ) ;
+			output.message.summary = output.message.summary ?? { diffs : [ ] } ;
+			output.message.summary.body = s.failoverError ;
 
-				s.failoverError = undefined ;
-			}
+			s.failoverError = undefined ;
+		}
 
-			if ( ! s.failoverModel ) return ;
+		if ( ! s.failoverModel ) return ;
 
-			// Incoming model matches original (currentModel) — apply override below
-			// Incoming model matches failoverModel — already switched, nothing to do
-			// Neither — user manually changed model, clear failover
-			if (
-				input.model.providerID !== s.currentModel.providerID ||
-				input.model.modelID !== s.currentModel.modelID
-			)
-			{
-				if (
-					input.model.providerID !== s.failoverModel.providerID ||
-					input.model.modelID !== s.failoverModel.modelID
-				)
-				{
-					log.info( `user override, clearing failover for ${ input.sessionID }` ) ;
-					s.failoverModel = undefined ;
-					s.currentModel = {
-						providerID : input.model.providerID,
-						modelID : input.model.modelID
-					} ;
-				}
-
-				return ;
-			}
-
+		// Incoming model matches the original failed model — override to fallback
+		if (
+			input.model.providerID === s.currentModel.providerID &&
+			input.model.modelID === s.currentModel.modelID
+		)
+		{
 			log.debug( `override for ${ input.sessionID }` ) ;
 
-			output.message.model = {
-				providerID : s.failoverModel.providerID,
-				modelID : s.failoverModel.modelID
-			} ;
+			const label = formatModelLabel( s.failoverModel ) ;
 
+			output.message.model = formatDisplayModel( s.failoverModel ) ;
 			output.message.summary = output.message.summary ?? { diffs : [ ] } ;
-			output.message.summary.body = `✅ Failover: ${ modelKey( s.failoverModel ) }${ s.failoverModel.variant ? ` (${ s.failoverModel.variant })` : "" }` ;
+			output.message.summary.body = `✅ Failover: ${ label }` ;
 
 			s.currentModel = {
 				providerID : s.failoverModel.providerID,
-				modelID : s.failoverModel.modelID
+				modelID : s.failoverModel.modelID,
+				variant : s.failoverModel.variant
 			} ;
 			s.failoverModel = undefined ;
+
+			return ;
+		}
+
+		// Incoming model already matches the failover target — clean up
+		if (
+			input.model.providerID === s.failoverModel.providerID &&
+			input.model.modelID === s.failoverModel.modelID
+		)
+		{
+			log.debug( `already on failover model for ${ input.sessionID }` ) ;
+
+			const label = formatModelLabel( s.failoverModel ) ;
+
+			output.message.model = formatDisplayModel( s.failoverModel ) ;
+			output.message.summary = output.message.summary ?? { diffs : [ ] } ;
+			output.message.summary.body = `✅ Failover: ${ label }` ;
+
+			s.currentModel = {
+				providerID : s.failoverModel.providerID,
+				modelID : s.failoverModel.modelID,
+				variant : s.failoverModel.variant
+			} ;
+			s.failoverModel = undefined ;
+
+			return ;
+		}
+
+			// Neither — user manually changed model
+			log.info( `user override, clearing failover for ${ input.sessionID }` ) ;
+
+			s.failoverModel = undefined ;
+			s.currentModel = {
+				providerID : input.model.providerID,
+				modelID : input.model.modelID,
+				variant : input.model.variant
+			} ;
 		},
 
 		dispose : async () =>

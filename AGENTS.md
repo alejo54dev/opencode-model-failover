@@ -18,10 +18,13 @@ OpenCode plugin that fails over to a fallback model when the active model hits a
 
 ## Failover flow
 
-1. Error detected → `failover()` sets cooldown on current model, picks next fallback, calls `client.session.abort()`.
-2. Re-prompt sent via `client.session.prompt()` with `"Continue."` to restart the session with the new model.
-3. On next `chat.message`, if incoming model matches the original (failed) model, `output.message.model` is overridden to the fallback.
-4. If user sends with a different model (neither original nor failover), failover is cleared and `currentModel` updated.
+1. Error detected → `failover()` sets cooldown on current model AND on selected fallback (to prevent re-selection loops), then picks the next fallback from the chain.
+2. Calls `client.session.abort()` to cancel the current failing request.
+3. Re-prompt sent via `client.session.prompt( { body: { model, parts } } )` — the fallback model is passed **directly in the API call**, so the re-prompt uses the new model immediately.
+4. On next `chat.message`, three cases:
+   - Incoming model matches original failed model → `output.message.model` overridden to fallback (user still on old model).
+   - Incoming model already matches fallback → session state cleaned up (model was already switched by prompt API).
+   - Neither → user manually changed model → failover cleared, `currentModel` updated.
 
 ## Config
 
