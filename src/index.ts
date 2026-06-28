@@ -1,6 +1,6 @@
 import type { Plugin, PluginInput } from "@opencode-ai/plugin"
 
-import { loadConfig, parseModel, type FailoverConfig } from "./config"
+import { loadConfig, modelKey, parseModel, type FailoverConfig } from "./config"
 import {
 	ABORT_DELAY_MS,
 	IMMEDIATE_STATUS_CODES,
@@ -8,12 +8,14 @@ import {
 	RETRYABLE_STATUS_CODES,
 	TRANSIENT_ERROR_PATTERNS,
 } from "./constants"
+import { log, setLogLevel } from "./logger"
+
+const SESSION_TTL_MS = 10 * 60 * 1000
 
 interface SessionState
 {
-	cooldownUntil: number
-	retryCount: number
 	failoverInProgress: boolean
+	createdAt: number
 }
 
 interface ModelRef
@@ -22,52 +24,35 @@ interface ModelRef
 	modelID: string
 }
 
-const SESSION_TTL_MS = 10 * 60 * 1000
 const CLEANUP_INTERVAL_MS = 5 * 60 * 1000
 
 const sessions = new Map<string, SessionState>()
 const modelCooldowns = new Map<string, number>()
-
-function modelKey(m: ModelRef): string
-{
-	return `${m.providerID}/${m.modelID}`
-}
 
 function ensureSession(sessionID: string): SessionState
 {
 	let s = sessions.get(sessionID)
 	if (!s)
 	{
-		s = { cooldownUntil: 0, retryCount: 0, failoverInProgress: false }
+		s = { failoverInProgress: false, createdAt: Date.now() }
 		sessions.set(sessionID, s)
 	}
 	return s
 }
 
-function isCooldownActive(sessionID: string): boolean
-{
-	const s = sessions.get(sessionID)
-	return s !== undefined && Date.now() < s.cooldownUntil
-}
-
-function activateCooldown(sessionID: string, ms: number): void
-{
-	const s = ensureSession(sessionID)
-	s.cooldownUntil = Date.now() + ms
-}
-
 function isModelInCooldown(m: ModelRef): boolean
 {
-	const expiry = modelCooldowns.get(modelKey(m))
+	const key = modelKey(m.providerID, m.modelID)
+	const expiry = modelCooldowns.get(key)
 	if (expiry === undefined) return false
 	if (Date.now() < expiry) return true
-	modelCooldowns.delete(modelKey(m))
+	modelCooldowns.delete(key)
 	return false
 }
 
 function markModelCooldown(m: ModelRef, ms: number): void
 {
-	modelCooldowns.set(modelKey(m), Date.now() + ms)
+	modelCooldowns.set(modelKey(m.providerID, m.modelID), Date.now() + ms)
 }
 
 function isPermanentError(msg: string): boolean
@@ -111,7 +96,7 @@ function classify(
 
 	if (message && isTransientError(message)) return "retry"
 
-	return "retry"
+	return "ignore"
 }
 
 async function abort(sessionID: string, client: PluginInput["client"]): Promise<void>
@@ -153,6 +138,7 @@ async function rePrompt(
 async function tryFallbackChain(
 	sessionID: string,
 	chain: ModelRef[],
+	cooldownMs: number,
 	client: PluginInput["client"],
 ): Promise<boolean>
 {
@@ -160,22 +146,22 @@ async function tryFallbackChain(
 	{
 		if (isModelInCooldown(model))
 		{
-			console.warn(`[model-failover] skipping ${modelKey(model)} (cooldown)`)
+			log("debug", `skipping ${modelKey(model.providerID, model.modelID)} (cooldown)`)
 			continue
 		}
 
-		console.warn(`[model-failover] trying fallback: ${modelKey(model)}`)
+		log("debug", `trying fallback: ${modelKey(model.providerID, model.modelID)}`)
 		if (await rePrompt(sessionID, model, client))
 		{
-			console.warn(`[model-failover] fallback succeeded: ${modelKey(model)}`)
+			log("info", `fallback succeeded: ${modelKey(model.providerID, model.modelID)}`)
 			return true
 		}
 
-		console.warn(`[model-failover] fallback failed: ${modelKey(model)}`)
-		markModelCooldown(model, 60_000)
+		log("debug", `fallback failed: ${modelKey(model.providerID, model.modelID)}`)
+		markModelCooldown(model, cooldownMs)
 	}
 
-	console.warn(`[model-failover] fallback chain exhausted`)
+	log("error", `fallback chain exhausted`)
 	return false
 }
 
@@ -191,24 +177,17 @@ async function executeFailover(
 	s.failoverInProgress = true
 	try
 	{
-		if (isCooldownActive(sessionID))
-		{
-			console.warn(`[model-failover] session ${sessionID} in cooldown, skipping failover`)
-			return
-		}
-
 		await abort(sessionID, client)
-		activateCooldown(sessionID, config.cooldownMs)
 
 		const chain = config.fallbackChain.map(parseModel)
 		if (chain.length === 0)
 		{
-			console.warn(`[model-failover] no fallback models configured`)
+			log("error", `no fallback models configured`)
 			return
 		}
 
-		console.warn(`[model-failover] starting failover for session ${sessionID}`)
-		await tryFallbackChain(sessionID, chain, client)
+		log("info", `starting failover for session ${sessionID}`)
+		await tryFallbackChain(sessionID, chain, config.cooldownMs, client)
 	}
 	finally
 	{
@@ -216,22 +195,19 @@ async function executeFailover(
 	}
 }
 
-function cleanupStaleSessions(): void
+function cleanupStaleState(): void
 {
 	const now = Date.now()
-	for (const [id, state] of sessions)
-	{
-		if (now - state.cooldownUntil > SESSION_TTL_MS && !state.failoverInProgress)
-		{
-			sessions.delete(id)
-		}
-	}
+
 	for (const [key, expiry] of modelCooldowns)
 	{
-		if (now >= expiry)
-		{
-			modelCooldowns.delete(key)
-		}
+		if (now >= expiry) modelCooldowns.delete(key)
+	}
+
+	for (const [id, state] of sessions)
+	{
+		if (state.failoverInProgress) continue
+		if (now - state.createdAt >= SESSION_TTL_MS) sessions.delete(id)
 	}
 }
 
@@ -239,13 +215,19 @@ export default (async ({ client }) =>
 {
 	const config = loadConfig()
 
+	setLogLevel(config.logLevel)
+
+	log("info", "initialized:", JSON.stringify(config))
+
 	if (!config.enabled) return {}
 
-	const cleanupTimer = setInterval(cleanupStaleSessions, CLEANUP_INTERVAL_MS)
+	const cleanupTimer = setInterval(cleanupStaleState, CLEANUP_INTERVAL_MS)
 
 	return {
 		event: async ({ event }) =>
 		{
+			log("debug", `event: ${event.type}`)
+
 			if (event.type === "session.deleted")
 			{
 				const props = event.properties as { info?: { id?: string } }
@@ -289,7 +271,12 @@ export default (async ({ client }) =>
 
 				if (action === "immediate")
 				{
-					console.warn(`[model-failover] permanent error: ${err.data.message}`)
+					log("error", `permanent error: ${err.data.message}`)
+					await executeFailover(sessionID, config, client)
+				}
+				else if (action === "retry")
+				{
+					log("info", `retryable error (${err.data.statusCode}): ${err.data.message}`)
 					await executeFailover(sessionID, config, client)
 				}
 
@@ -311,7 +298,7 @@ export default (async ({ client }) =>
 
 				if (isPermanentError(props.status.message))
 				{
-					console.warn(`[model-failover] permanent retry status: ${props.status.message}`)
+					log("error", `permanent retry status (session ${props.sessionID}): ${props.status.message}`)
 					await executeFailover(props.sessionID, config, client)
 					return
 				}
@@ -321,12 +308,12 @@ export default (async ({ client }) =>
 					const attempt = props.status.attempt ?? 1
 					if (attempt <= config.maxRetries) return
 
-					console.warn(`[model-failover] retries exhausted (${attempt}/${config.maxRetries})`)
+					log("error", `retries exhausted (session ${props.sessionID}) (${attempt}/${config.maxRetries})`)
 					await executeFailover(props.sessionID, config, client)
 					return
 				}
 
-				console.warn(`[model-failover] unknown retry status: ${props.status.message}`)
+				log("error", `unknown retry status (session ${props.sessionID}): ${props.status.message}`)
 				await executeFailover(props.sessionID, config, client)
 			}
 		},

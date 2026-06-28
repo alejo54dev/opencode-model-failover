@@ -2,11 +2,14 @@ import { existsSync, readFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { join } from "node:path"
 
+import type { LogLevel } from "./logger"
+
 export interface FailoverConfig {
 	enabled: boolean
 	fallbackChain: string[]
 	maxRetries: number
 	cooldownMs: number
+	logLevel: LogLevel
 }
 
 const DEFAULT_CONFIG: FailoverConfig = {
@@ -14,12 +17,18 @@ const DEFAULT_CONFIG: FailoverConfig = {
 	fallbackChain: [],
 	maxRetries: 2,
 	cooldownMs: 30_000,
+	logLevel: "info",
 }
 
-function getConfigDir(): string
+export function getConfigDir(): string
 {
 	const xdg = process.env.XDG_CONFIG_HOME ?? join(homedir(), ".config")
 	return join(xdg, "opencode")
+}
+
+export function modelKey(providerID: string, modelID: string): string
+{
+	return `${providerID}/${modelID}`
 }
 
 export function loadConfig(): FailoverConfig
@@ -35,6 +44,8 @@ export function loadConfig(): FailoverConfig
 	{
 		const raw = JSON.parse(readFileSync(configPath, "utf-8")) as Record<string, unknown>
 
+		const logLevel = raw.logLevel as LogLevel
+
 		return {
 			enabled: typeof raw.enabled === "boolean" ? raw.enabled : DEFAULT_CONFIG.enabled,
 			fallbackChain: Array.isArray(raw.fallbackChain)
@@ -46,6 +57,7 @@ export function loadConfig(): FailoverConfig
 			cooldownMs: typeof raw.cooldownMs === "number"
 				? Math.max(0, Math.floor(raw.cooldownMs))
 				: DEFAULT_CONFIG.cooldownMs,
+			logLevel: ["error", "info", "debug"].includes(logLevel) ? logLevel : DEFAULT_CONFIG.logLevel,
 		}
 	}
 	catch

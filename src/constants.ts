@@ -2,8 +2,6 @@ export const IMMEDIATE_STATUS_CODES: ReadonlySet<number> = new Set([401, 402, 40
 
 export const RETRYABLE_STATUS_CODES: ReadonlySet<number> = new Set([429, 500, 502, 503, 504, 529])
 
-export const BACKOFF_BASE_MS = 2000
-
 export const ABORT_DELAY_MS = 300
 
 export const PERMANENT_ERROR_PATTERNS: readonly string[] = [

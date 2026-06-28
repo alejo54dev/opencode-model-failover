@@ -13,7 +13,12 @@
 ```bash
 bun run build       # Build with tsup → dist/
 bun run typecheck   # TypeScript type checking (tsc --noEmit)
+bun run deploy      # Build + copy to ~/.config/opencode/plugins/model-failover.js
 ```
+
+## Installation note
+
+OpenCode discovers local plugins via glob `{plugin,plugins}/*.{ts,js}` — only direct files in `plugins/`, not subdirectories (issue [#6866](https://github.com/anomalyco/opencode/issues/6866)). The deploy script copies `dist/index.js` → `~/.config/opencode/plugins/model-failover.js`.
 
 ## Project structure
 
