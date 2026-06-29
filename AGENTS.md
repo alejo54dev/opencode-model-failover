@@ -2,29 +2,27 @@
 
 ## Overview
 
-OpenCode plugin that fails over to a fallback model when the active model hits a permanent error (quota, billing, auth). Single ESM file, zero dependencies.
+OpenCode plugin that fails over to a fallback model when the active model hits a permanent error (quota, billing, auth). Minimal design: one chain-index counter per session, reset on each user message.
 
 ## Architecture
 
 | File | Role |
 |---|---|
-| `model-failover.js` | Plugin entry point. Exports default async function that returns three hooks: `event`, `chat.message`, `dispose`. |
+| `model-failover.js` | Plugin entry point. Exports default async function returning three hooks. |
 
 ## Hooks
 
-- **`event`** — Listens for `session.error` and `session.status` (type "retry"). Pattern-matches error messages and checks status codes 401/402/403. On match, calls `failover()`.
-- **`chat.message`** — Captures current model on first message. Overrides `output.message.model` if a failover is pending. Detects manual model changes and clears failover state.
-- **`dispose`** — Cleans session and cooldown maps.
+- **`event`** — Listens for `session.error` and `session.status` (type "retry"). On permanent error: reads the chain index for the session, picks `fallbackChain[index]`, increments the index, aborts the current request, re-prompts with the fallback model. Also handles `session.deleted` to clean up the chain index.
+- **`chat.message`** — Resets the chain index for the session (`chainIdx.delete(sessionID)`). This ensures each new user message starts a fresh cascade through the fallback chain.
+- **`dispose`** — Clears the chain-index map.
 
 ## Failover flow
 
-1. Error detected → `failover()` sets cooldown on current model AND on selected fallback (to prevent re-selection loops), then picks the next fallback from the chain.
-2. Calls `client.session.abort()` to cancel the current failing request.
-3. Re-prompt sent via `client.session.prompt( { body: { model, parts } } )` — the fallback model is passed **directly in the API call**, so the re-prompt uses the new model immediately.
-4. On next `chat.message`, three cases:
-   - Incoming model matches original failed model → `output.message.model` overridden to fallback (user still on old model).
-   - Incoming model already matches fallback → session state cleaned up (model was already switched by prompt API).
-   - Neither → user manually changed model → failover cleared, `currentModel` updated.
+1. Permanent error detected → `chainIdx.get(sessionID) ?? 0` → picks `fallbackChain[idx]`.
+2. `chainIdx` set to `idx + 1` so the next error (if the fallback also fails) tries the next entry.
+3. `client.session.abort()` cancels the failing request.
+4. `client.session.prompt()` re-prompts with the fallback model directly in the API body.
+5. On the next user message (`chat.message`), the chain index resets. If the user's model still fails, the cascade starts from the beginning again.
 
 ## Config
 
@@ -32,7 +30,6 @@ OpenCode plugin that fails over to a fallback model when the active model hits a
 
 - `enabled` (boolean, default `true`)
 - `fallbackChain` (array of `{ model, variant? }`)
-- `cooldownMs` (number, default `30000`)
 - `logLevel` (`"error"` | `"info"` | `"debug"`, default `"info"`)
 
 ## Conventions

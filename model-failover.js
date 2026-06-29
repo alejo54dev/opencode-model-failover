@@ -1,8 +1,12 @@
 /**
  *	model-failover.js
  *
- *	OpenCode plugin that intercepts permanent model errors and fails over
- *	through a configured chain of fallback models.
+ *	OpenCode plugin — intercepts permanent model errors (quota, billing,
+ *	auth, rate limits) and fails over through a configured fallback chain.
+ *
+ *	Design: No persistent session state beyond a chain index counter that
+ *	resets on each new user message. Each error cascade advances through
+ *	the chain; the next user message restarts from the beginning.
  *
  *	Install:
  *		cp model-failover.js ~/.config/opencode/plugins/model-failover.js
@@ -10,7 +14,7 @@
  *	Config: ~/.config/opencode/model-failover.json
  *
  *	@name model-failover
- *	@version 4.0.2
+ *	@version 5.0.0
  *	@author Alejandro Carraretto
  *	@license MIT
  */
@@ -21,6 +25,7 @@ import { join } from "node:path" ;
 
 // ── Config ─────────────────────────────────────────────
 
+/** Error-message substrings that signal a permanent (non-recoverable) failure. */
 const DEFAULT_PATTERNS = [
 	"usage limit",
 	"quota exceeded",
@@ -36,14 +41,19 @@ const DEFAULT_PATTERNS = [
 	"too many requests"
 ] ;
 
+/** Default settings merged with user overrides from model-failover.json. */
 const DEFAULT_CONFIG = {
 	enabled : true,
 	fallbackChain : [ ],
-	cooldownMs : 30_000,
 	patterns : DEFAULT_PATTERNS,
 	logLevel : "info"
 } ;
 
+/**
+ * Returns the absolute path to the OpenCode config directory.
+ *
+ * @returns {string}
+ */
 function getConfigDir()
 {
 	const xdg = process.env.XDG_CONFIG_HOME ?? join( homedir(), ".config" ) ;
@@ -51,6 +61,12 @@ function getConfigDir()
 	return join( xdg, "opencode" ) ;
 }
 
+/**
+ * Parses a single fallback-chain entry from the config file.
+ *
+ * @param {unknown} entry - Raw JSON value.
+ * @returns {{ model:string, variant?:string }}
+ */
 function parseEntry( entry )
 {
 	if ( typeof entry === "object" && entry !== null )
@@ -64,6 +80,12 @@ function parseEntry( entry )
 	return { model : "", variant : undefined } ;
 }
 
+/**
+ * Loads and validates the plugin config from disk.
+ * Falls back to defaults on missing or invalid values.
+ *
+ * @returns {typeof DEFAULT_CONFIG}
+ */
 function loadConfig()
 {
 	const configPath = join( getConfigDir(), "model-failover.json" ) ;
@@ -78,13 +100,12 @@ function loadConfig()
 		const raw = JSON.parse( readFileSync( configPath, "utf-8" ) ) ;
 
 		return {
-			enabled : typeof raw.enabled === "boolean" ? raw.enabled : DEFAULT_CONFIG.enabled,
+			enabled : typeof raw.enabled === "boolean"
+				? raw.enabled
+				: DEFAULT_CONFIG.enabled,
 			fallbackChain : Array.isArray( raw.fallbackChain )
 				? raw.fallbackChain.map( parseEntry ).filter( ( e ) => e.model !== "" )
 				: [ ...DEFAULT_CONFIG.fallbackChain ],
-			cooldownMs : typeof raw.cooldownMs === "number"
-				? Math.max( 0, Math.floor( raw.cooldownMs ) )
-				: DEFAULT_CONFIG.cooldownMs,
 			patterns : Array.isArray( raw.patterns )
 				? raw.patterns.filter( ( p ) => typeof p === "string" )
 				: [ ...DEFAULT_CONFIG.patterns ],
@@ -101,8 +122,15 @@ function loadConfig()
 
 // ── Logger ─────────────────────────────────────────────
 
+/** Numeric rank for log-level comparisons. */
 const LOG_RANK = { error : 0, info : 1, debug : 2 } ;
 
+/**
+ * File-based logger that appends to model-failover.log.
+ *
+ * @param {"error"|"info"|"debug"} level - Minimum level to emit.
+ * @returns {{ error:Function, info:Function, debug:Function }}
+ */
 function createLogger( level )
 {
 	const min = LOG_RANK[ level ] ?? 1 ;
@@ -112,7 +140,9 @@ function createLogger( level )
 		if ( LOG_RANK[ lvl ] > min ) return ;
 
 		const ts = new Date().toISOString() ;
-		const body = args.map( ( a ) => ( typeof a === "string" ? a : JSON.stringify( a ) ) ).join( " " ) ;
+		const body = args.map(
+			( a ) => ( typeof a === "string" ? a : JSON.stringify( a ) )
+		).join( " " ) ;
 
 		try
 		{
@@ -126,13 +156,19 @@ function createLogger( level )
 
 	return {
 		error : ( ...args ) => write( "error", ...args ),
-		info : ( ...args ) => write( "info", ...args ),
+		info  : ( ...args ) => write( "info", ...args ),
 		debug : ( ...args ) => write( "debug", ...args )
 	} ;
 }
 
 // ── Helpers ────────────────────────────────────────────
 
+/**
+ * Splits a "providerID/modelID" string into its two parts.
+ *
+ * @param {string} spec - e.g. "openai/gpt-4".
+ * @returns {{ providerID:string, modelID:string }}
+ */
 function parseModel( spec )
 {
 	const idx = spec.indexOf( "/" ) ;
@@ -145,11 +181,13 @@ function parseModel( spec )
 	} ;
 }
 
-function modelKey( ref )
-{
-	return `${ ref.providerID }/${ ref.modelID }` ;
-}
-
+/**
+ * Returns a predicate that checks messages against permanent-error patterns.
+ * All matching is case-insensitive.
+ *
+ * @param {string[]} patterns
+ * @returns {( msg:string ) => boolean}
+ */
 function createMatcher( patterns )
 {
 	const lower = patterns.map( ( p ) => p.toLowerCase() ) ;
@@ -157,34 +195,31 @@ function createMatcher( patterns )
 	return ( msg ) => lower.some( ( p ) => msg.toLowerCase().includes( p ) ) ;
 }
 
-function displayModelID( ref )
+/**
+ * Formats a model as "providerID/modelID:variant".
+ *
+ * @param {{ providerID:string, modelID:string }} base
+ * @param {string} [variant]
+ * @returns {string}
+ */
+function formatModelLabel( base, variant )
 {
-	return ref.modelID + (ref.variant ? `:${ ref.variant }` : "") ;
-}
-
-function formatDisplayModel( ref )
-{
-	return {
-		providerID : ref.providerID,
-		modelID : ref.modelID,
-		variant : ref.variant
-	} ;
-}
-
-function formatModelLabel( ref )
-{
-	return `${ ref.providerID }/${ displayModelID( ref ) }` ;
+	return `${ base.providerID }/${ base.modelID }${ variant ? ":" + variant : "" }` ;
 }
 
 // ── Plugin ─────────────────────────────────────────────
 
 /**
- *	@typedef {{ providerID:string, modelID:string }} ModelRef
- *	@typedef {{ providerID:string, modelID:string, variant?:string }} ModelRefWithVariant
- *	@typedef {{ model:string, variant?:string }} FallbackEntry
- *	@typedef {{ currentModel?:ModelRefWithVariant, currentAgent?:string, failoverModel?:ModelRefWithVariant, failoverError?:string, failoverInProgress:boolean, failoverNotified?:boolean }} SessionState
+ * Plugin entry point.
+ *
+ * On permanent error: aborts the failing request and re-prompts with the
+ * next model in the fallback chain. A single chain-index counter per session
+ * advances through the chain; the counter resets on each new user message.
+ *
+ * @param {Object} params
+ * @param {import("@opencode-ai/plugin").Client} params.client
+ * @returns {Promise<{ event:Function, "chat.message":Function, dispose:Function }>}
  */
-
 export default async function plugin( { client } )
 {
 	const config = loadConfig() ;
@@ -200,177 +235,23 @@ export default async function plugin( { client } )
 		return {} ;
 	}
 
-	/** @type {Map<string, SessionState>} */
-	const sessions = new Map() ;
-
-	/** @type {Map<string, number>} */
-	const cooldowns = new Map() ;
-
-	/** @type {string|null} */
-	let primarySessionID = null ;
-
-	function ensureSession( id )
-	{
-		let s = sessions.get( id ) ;
-
-		if ( ! s )
-		{
-			s = { failoverInProgress : false, failoverNotified : false } ;
-			sessions.set( id, s ) ;
-
-			return s ;
-		}
-
-		return s ;
-	}
-
-	function isInCooldown( ref )
-	{
-		const key = modelKey( ref ) ;
-		const expiry = cooldowns.get( key ) ;
-
-		if ( expiry === undefined ) return false ;
-		if ( Date.now() < expiry ) return true ;
-
-		cooldowns.delete( key ) ;
-
-		return false ;
-	}
-
-	function pickFallback( current, chain )
-	{
-		for ( const entry of chain )
-		{
-			const base = parseModel( entry.model ) ;
-
-			if ( ! base.providerID )
-			{
-				log.error( `bad entry: ${ entry.model }` ) ;
-
-				continue ;
-			}
-
-			if ( current && current.providerID === base.providerID && current.modelID === base.modelID )
-			{
-				log.debug( `skip current: ${ entry.model }` ) ;
-
-				continue ;
-			}
-
-			if ( isInCooldown( base ) )
-			{
-				log.debug( `skip cooldown: ${ entry.model }` ) ;
-
-				continue ;
-			}
-
-			return entry ;
-		}
-
-		return null ;
-	}
-
-	async function failover( sessionID, reason, current )
-	{
-		const s = ensureSession( sessionID ) ;
-
-		if ( s.failoverInProgress ) return ;
-
-		s.failoverInProgress = true ;
-
-		try
-		{
-			cooldowns.set( modelKey( current ), Date.now() + config.cooldownMs ) ;
-			log.debug( `cooldown ${ modelKey( current ) } ${ config.cooldownMs }ms` ) ;
-
-			const next = pickFallback( current, config.fallbackChain ) ;
-
-			if ( ! next )
-			{
-				log.error( `chain exhausted for ${ sessionID }` ) ;
-
-				s.failoverError = `❌ Failover: no fallback for ${ modelKey( current ) }` ;
-
-				return ;
-			}
-
-			const base = parseModel( next.model ) ;
-
-			s.failoverModel = {
-				providerID : base.providerID,
-				modelID : base.modelID,
-				variant : next.variant
-			} ;
-
-			// Prevent reselecting this fallback if it also fails
-			cooldowns.set( modelKey( base ), Date.now() + config.cooldownMs ) ;
-			log.debug( `cooldown ${ modelKey( base ) } ${ config.cooldownMs }ms` ) ;
-
-			const from = modelKey( current ) ;
-			const to = modelKey( base ) ;
-
-			log.info( `${ reason }: ${ from } -> ${ to }` ) ;
-
-			try
-			{
-				await client.session.abort( { path : { id : sessionID } } ) ;
-			}
-			catch {}
-
-			// Re-prompt the session with the fallback model
-			try
-			{
-				const label = formatModelLabel( s.failoverModel ) ;
-
-				await client.session.prompt( {
-					path : { id : sessionID },
-					body : {
-						model : {
-							providerID : base.providerID,
-							modelID : base.modelID,
-							variant : next.variant
-						},
-						...( s.currentAgent ? { agent : s.currentAgent } : {} ),
-						parts : [
-							{ type : "text", text : `✅ Failover to ${ label }`, ignored : true },
-							{ type : "text", text : "Continue." }
-						]
-					}
-				} ) ;
-			}
-			catch
-			{
-				log.error( `re-prompt failed for ${ sessionID }` ) ;
-			}
-
-
-		}
-		finally
-		{
-			s.failoverInProgress = false ;
-		}
-	}
-
-	// ── Hooks ──────────────────────────────────────────
+	/** @type {Map<string, number>} Next chain index per session. Reset on each user message. */
+	const chainIdx = new Map() ;
 
 	return {
+		/**
+		 * Handles session events. On permanent error:
+		 *  1. Reads the chain index for this session.
+		 *  2. Picks `fallbackChain[index]`, increments the index.
+		 *  3. Aborts the current request.
+		 *  4. Re-prompts with the fallback model.
+		 */
 		event : async ( { event } ) =>
 		{
-			log.debug( `event: ${ event.type }` ) ;
-
+			// Clean up state when a session is deleted
 			if ( event.type === "session.deleted" )
 			{
-				const id = event.properties?.info?.id ;
-
-				if ( id )
-				{
-					sessions.delete( id ) ;
-
-					if ( id === primarySessionID )
-					{
-						primarySessionID = null ;
-					}
-				}
+				chainIdx.delete( event.properties?.info?.id ) ;
 
 				return ;
 			}
@@ -378,31 +259,30 @@ export default async function plugin( { client } )
 			let sessionID = null ;
 			let message = null ;
 
+			// Extract error info from retry or error events
 			if ( event.type === "session.status" )
 			{
-				const props = event.properties ;
+				const p = event.properties ;
 
-				if ( ! props?.sessionID || props?.status?.type !== "retry" || ! props.status.message )
-				{
-					return ;
-				}
+				if ( ! p?.sessionID || p?.status?.type !== "retry" || ! p.status.message ) return ;
 
-				sessionID = props.sessionID ;
-				message = props.status.message ;
+				sessionID = p.sessionID ;
+				message = p.status.message ;
 			}
 			else if ( event.type === "session.error" )
 			{
-				const props = event.properties ;
+				const p = event.properties ;
 
-				if ( ! props?.sessionID ) return ;
-				if ( props?.error?.name === "MessageAbortedError" ) return ;
+				if ( ! p?.sessionID ) return ;
+				if ( p?.error?.name === "MessageAbortedError" ) return ;
 
-				sessionID = props.sessionID ;
-				message = props?.error?.data?.message ?? null ;
+				sessionID = p.sessionID ;
+				message = p?.error?.data?.message ?? null ;
 
+				// Some providers send a status code without a message body
 				if ( ! message )
 				{
-					const sc = props?.error?.data?.statusCode ;
+					const sc = p?.error?.data?.statusCode ;
 
 					if ( sc === 401 || sc === 402 || sc === 403 )
 					{
@@ -415,14 +295,11 @@ export default async function plugin( { client } )
 				return ;
 			}
 
-			if ( ! message || ! sessionID ) return ;
+			if ( ! sessionID || ! message ) return ;
 
-			// Only respond to events from the primary chat session
-			if ( primarySessionID !== null && sessionID !== primarySessionID ) return ;
-
+			// Check if the error is permanent
 			let isFailoverSignal = isPermanent( message ) ;
 
-			// Status code 401/402/403 always trigger failover regardless of message
 			if ( ! isFailoverSignal && event.type === "session.error" )
 			{
 				const sc = event.properties?.error?.data?.statusCode ;
@@ -431,138 +308,64 @@ export default async function plugin( { client } )
 
 			if ( ! isFailoverSignal ) return ;
 
-			const s = ensureSession( sessionID ) ;
+			// Advance through the fallback chain
+			const idx = chainIdx.get( sessionID ) ?? 0 ;
+			const entry = config.fallbackChain[ idx ] ;
 
-			if ( ! s.currentModel )
+			if ( ! entry )
 			{
-				// No model captured yet — nothing to fail over from
+				log.error( `chain exhausted for ${ sessionID }` ) ;
+
 				return ;
 			}
 
-			log.error( `permanent: ${ message }` ) ;
+			const base = parseModel( entry.model ) ;
 
-			await failover(
-				sessionID,
-				event.type === "session.error" ? "error" : "retry",
-				s.currentModel
-			) ;
+			if ( ! base.providerID ) return ;
+
+			chainIdx.set( sessionID, idx + 1 ) ;
+
+			log.info( `[${ idx }] ${ formatModelLabel( base, entry.variant ) }` ) ;
+
+			// Cancel the current failing request
+			await client.session.abort( { path : { id : sessionID } } ).catch( () => {} ) ;
+
+			// Re-prompt with the fallback model
+			await client.session.prompt( {
+				path : { id : sessionID },
+				body : {
+					model : {
+						providerID : base.providerID,
+						modelID : base.modelID,
+						variant : entry.variant
+					},
+					parts : [
+						{
+							type : "text",
+							text : `✅ Failover to ${ formatModelLabel( base, entry.variant ) }`,
+							ignored : true
+						},
+						{ type : "text", text : "Continue." }
+					]
+				}
+			} ).catch( () => log.error( `re-prompt failed for ${ sessionID }` ) ) ;
 		},
 
-		"chat.message": async ( input, output ) =>
+		/**
+		 * Intercepts each user message. Resets the chain index so the
+		 * next error cascade starts from the beginning of the fallback chain.
+		 */
+		"chat.message" : async ( input ) =>
 		{
-			if ( ! input.sessionID || ! input.model ) return ;
-
-			// First chat.message ever seen — this is the primary (main chat) session.
-			// Subagent sessions (plan/build) are ignored to avoid state contamination.
-			if ( primarySessionID === null )
-			{
-				primarySessionID = input.sessionID ;
-			}
-			else if ( input.sessionID !== primarySessionID )
-			{
-				return ;
-			}
-
-			const s = ensureSession( input.sessionID ) ;
-
-			if ( ! s.currentModel )
-			{
-				s.currentModel = {
-					providerID : input.model.providerID,
-					modelID : input.model.modelID,
-					variant : input.model.variant
-				} ;
-			}
-
-			if ( input.agent )
-			{
-				s.currentAgent = input.agent ;
-			}
-
-		// Fast path: no failover state → nothing to do
-		if ( ! s.failoverModel && ! s.failoverError ) return ;
-
-		// Show chain-exhausted warning
-		if ( s.failoverError )
-		{
-			output.parts.push( { type : "text", text : s.failoverError, ignored : true } ) ;
-			output.message.summary = output.message.summary ?? { diffs : [ ] } ;
-			output.message.summary.body = s.failoverError ;
-
-			s.failoverError = undefined ;
-		}
-
-		// NO RETURN on !s.failoverModel — we keep failoverModel alive across
-		// messages until the user explicitly picks a different model.
-		// This ensures the bimodal model change works: if the user switches
-		// from build to plan and the TUI sends the old model, we override it.
-
-		// Incoming model matches the original failed model — override to fallback
-		if (
-			s.failoverModel &&
-			input.model.providerID === s.currentModel.providerID &&
-			input.model.modelID === s.currentModel.modelID
-		)
-		{
-			log.debug( `override for ${ input.sessionID }` ) ;
-
-			const label = formatModelLabel( s.failoverModel ) ;
-
-			output.message.model = formatDisplayModel( s.failoverModel ) ;
-
-			if ( ! s.failoverNotified )
-			{
-				output.message.summary = output.message.summary ?? { diffs : [ ] } ;
-				output.message.summary.body = `✅ Failover: ${ label }` ;
-				s.failoverNotified = true ;
-			}
-
-			return ;
-		}
-
-		// Incoming model already matches the failover target
-		if (
-			s.failoverModel &&
-			input.model.providerID === s.failoverModel.providerID &&
-			input.model.modelID === s.failoverModel.modelID
-		)
-		{
-			log.debug( `already on failover model for ${ input.sessionID }` ) ;
-
-			const label = formatModelLabel( s.failoverModel ) ;
-
-			output.message.model = formatDisplayModel( s.failoverModel ) ;
-
-			if ( ! s.failoverNotified )
-			{
-				output.message.summary = output.message.summary ?? { diffs : [ ] } ;
-				output.message.summary.body = `✅ Failover: ${ label }` ;
-				s.failoverNotified = true ;
-			}
-
-			return ;
-		}
-
-		// Incoming model matches neither original nor fallback — user changed
-		if ( s.failoverModel )
-		{
-			log.info( `user override, clearing failover for ${ input.sessionID }` ) ;
-
-			s.failoverModel = undefined ;
-			s.currentModel = {
-				providerID : input.model.providerID,
-				modelID : input.model.modelID,
-				variant : input.model.variant
-			} ;
-
-			return ;
-		}
+			if ( input.sessionID ) chainIdx.delete( input.sessionID ) ;
 		},
 
+		/**
+		 * Cleans up on plugin disposal.
+		 */
 		dispose : async () =>
 		{
-			sessions.clear() ;
-			cooldowns.clear() ;
+			chainIdx.clear() ;
 			log.info( "disposed" ) ;
 		}
 	} ;
