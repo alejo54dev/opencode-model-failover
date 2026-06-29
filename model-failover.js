@@ -36,9 +36,7 @@ const DEFAULT_PATTERNS = [
 	"insufficient quota",
 	"payment required",
 	"subscription",
-	"subscribe to",
-	"rate limit",
-	"too many requests"
+	"subscribe to"
 ] ;
 
 /** Default settings merged with user overrides from model-failover.json. */
@@ -258,6 +256,7 @@ export default async function plugin( { client } )
 
 			let sessionID = null ;
 			let message = null ;
+			let isFailoverSignal = false ;
 
 			// Extract error info from retry or error events
 			if ( event.type === "session.status" )
@@ -278,28 +277,20 @@ export default async function plugin( { client } )
 
 				sessionID = p.sessionID ;
 				message = p?.error?.data?.message ?? null ;
-
-				// Some providers send a status code without a message body
-				if ( ! message )
-				{
-					const sc = p?.error?.data?.statusCode ;
-
-					if ( sc === 401 || sc === 402 || sc === 403 )
-					{
-						message = `HTTP ${ sc }` ;
-					}
-				}
 			}
 			else
 			{
 				return ;
 			}
 
-			if ( ! sessionID || ! message ) return ;
+			if ( ! sessionID ) return ;
 
-			// Check if the error is permanent
-			let isFailoverSignal = isPermanent( message ) ;
+			if ( message )
+			{
+				isFailoverSignal = isPermanent( message ) ;
+			}
 
+			// Status code 401/402/403 triggers failover regardless of message
 			if ( ! isFailoverSignal && event.type === "session.error" )
 			{
 				const sc = event.properties?.error?.data?.statusCode ;
@@ -321,11 +312,18 @@ export default async function plugin( { client } )
 
 			const base = parseModel( entry.model ) ;
 
-			if ( ! base.providerID ) return ;
+			if ( ! base.providerID )
+			{
+				log.error( `bad fallback entry: ${ entry.model }` ) ;
+
+				return ;
+			}
 
 			chainIdx.set( sessionID, idx + 1 ) ;
 
-			log.info( `[${ idx }] ${ formatModelLabel( base, entry.variant ) }` ) ;
+			const label = formatModelLabel( base, entry.variant ) ;
+
+			log.info( `[${ idx }] ${ label }` ) ;
 
 			// Cancel the current failing request
 			await client.session.abort( { path : { id : sessionID } } ).catch( () => {} ) ;
@@ -342,7 +340,7 @@ export default async function plugin( { client } )
 					parts : [
 						{
 							type : "text",
-							text : `✅ Failover to ${ formatModelLabel( base, entry.variant ) }`,
+							text : `✅ Failover to ${ label }`,
 							ignored : true
 						},
 						{ type : "text", text : "Continue." }
