@@ -10,7 +10,7 @@
  *	Config: ~/.config/opencode/model-failover.json
  *
  *	@name model-failover
- *	@version 4.0.0
+ *	@version 4.0.2
  *	@author Alejandro Carraretto
  *	@license MIT
  */
@@ -206,14 +206,19 @@ export default async function plugin( { client } )
 	/** @type {Map<string, number>} */
 	const cooldowns = new Map() ;
 
+	/** @type {string|null} */
+	let primarySessionID = null ;
+
 	function ensureSession( id )
 	{
 		let s = sessions.get( id ) ;
 
 		if ( ! s )
 		{
-			s = { failoverInProgress : false } ;
+			s = { failoverInProgress : false, failoverNotified : false } ;
 			sessions.set( id, s ) ;
+
+			return s ;
 		}
 
 		return s ;
@@ -337,35 +342,7 @@ export default async function plugin( { client } )
 				log.error( `re-prompt failed for ${ sessionID }` ) ;
 			}
 
-			// Update global config model so the UI selector reflects the change
-			// in both plan and build modes.
-			try
-			{
-				const modelStr = `${ base.providerID }/${ base.modelID }` ;
 
-				const configBody = { model : modelStr } ;
-
-				// Also update per-agent models so the selector changes in both
-				// plan and build modes regardless of per-agent overrides.
-				try
-				{
-					const cur = await client.config.get() ;
-					const agent = { ...( cur.agent ?? {} ) } ;
-
-					agent.plan = { ...agent.plan, model : modelStr, variant : next.variant } ;
-					agent.build = { ...agent.build, model : modelStr, variant : next.variant } ;
-					configBody.agent = agent ;
-				}
-				catch
-				{
-					log.debug( "config.get unavailable, top-level only" ) ;
-				}
-
-				await client.config.update( { body : configBody } ) ;
-
-				log.debug( `config model set to ${ modelStr }` ) ;
-			}
-			catch {}
 		}
 		finally
 		{
@@ -384,7 +361,15 @@ export default async function plugin( { client } )
 			{
 				const id = event.properties?.info?.id ;
 
-				if ( id ) sessions.delete( id ) ;
+				if ( id )
+				{
+					sessions.delete( id ) ;
+
+					if ( id === primarySessionID )
+					{
+						primarySessionID = null ;
+					}
+				}
 
 				return ;
 			}
@@ -431,6 +416,9 @@ export default async function plugin( { client } )
 
 			if ( ! message || ! sessionID ) return ;
 
+			// Only respond to events from the primary chat session
+			if ( primarySessionID !== null && sessionID !== primarySessionID ) return ;
+
 			let isFailoverSignal = isPermanent( message ) ;
 
 			// Status code 401/402/403 always trigger failover regardless of message
@@ -463,6 +451,17 @@ export default async function plugin( { client } )
 		{
 			if ( ! input.sessionID || ! input.model ) return ;
 
+			// First chat.message ever seen — this is the primary (main chat) session.
+			// Subagent sessions (plan/build) are ignored to avoid state contamination.
+			if ( primarySessionID === null )
+			{
+				primarySessionID = input.sessionID ;
+			}
+			else if ( input.sessionID !== primarySessionID )
+			{
+				return ;
+			}
+
 			const s = ensureSession( input.sessionID ) ;
 
 			if ( ! s.currentModel )
@@ -474,6 +473,9 @@ export default async function plugin( { client } )
 				} ;
 			}
 
+		// Fast path: no failover state → nothing to do
+		if ( ! s.failoverModel && ! s.failoverError ) return ;
+
 		// Show chain-exhausted warning
 		if ( s.failoverError )
 		{
@@ -484,10 +486,14 @@ export default async function plugin( { client } )
 			s.failoverError = undefined ;
 		}
 
-		if ( ! s.failoverModel ) return ;
+		// NO RETURN on !s.failoverModel — we keep failoverModel alive across
+		// messages until the user explicitly picks a different model.
+		// This ensures the bimodal model change works: if the user switches
+		// from build to plan and the TUI sends the old model, we override it.
 
 		// Incoming model matches the original failed model — override to fallback
 		if (
+			s.failoverModel &&
 			input.model.providerID === s.currentModel.providerID &&
 			input.model.modelID === s.currentModel.modelID
 		)
@@ -497,21 +503,20 @@ export default async function plugin( { client } )
 			const label = formatModelLabel( s.failoverModel ) ;
 
 			output.message.model = formatDisplayModel( s.failoverModel ) ;
-			output.message.summary = output.message.summary ?? { diffs : [ ] } ;
-			output.message.summary.body = `✅ Failover: ${ label }` ;
 
-			s.currentModel = {
-				providerID : s.failoverModel.providerID,
-				modelID : s.failoverModel.modelID,
-				variant : s.failoverModel.variant
-			} ;
-			s.failoverModel = undefined ;
+			if ( ! s.failoverNotified )
+			{
+				output.message.summary = output.message.summary ?? { diffs : [ ] } ;
+				output.message.summary.body = `✅ Failover: ${ label }` ;
+				s.failoverNotified = true ;
+			}
 
 			return ;
 		}
 
-		// Incoming model already matches the failover target — clean up
+		// Incoming model already matches the failover target
 		if (
+			s.failoverModel &&
 			input.model.providerID === s.failoverModel.providerID &&
 			input.model.modelID === s.failoverModel.modelID
 		)
@@ -521,20 +526,20 @@ export default async function plugin( { client } )
 			const label = formatModelLabel( s.failoverModel ) ;
 
 			output.message.model = formatDisplayModel( s.failoverModel ) ;
-			output.message.summary = output.message.summary ?? { diffs : [ ] } ;
-			output.message.summary.body = `✅ Failover: ${ label }` ;
 
-			s.currentModel = {
-				providerID : s.failoverModel.providerID,
-				modelID : s.failoverModel.modelID,
-				variant : s.failoverModel.variant
-			} ;
-			s.failoverModel = undefined ;
+			if ( ! s.failoverNotified )
+			{
+				output.message.summary = output.message.summary ?? { diffs : [ ] } ;
+				output.message.summary.body = `✅ Failover: ${ label }` ;
+				s.failoverNotified = true ;
+			}
 
 			return ;
 		}
 
-			// Neither — user manually changed model
+		// Incoming model matches neither original nor fallback — user changed
+		if ( s.failoverModel )
+		{
 			log.info( `user override, clearing failover for ${ input.sessionID }` ) ;
 
 			s.failoverModel = undefined ;
@@ -543,6 +548,9 @@ export default async function plugin( { client } )
 				modelID : input.model.modelID,
 				variant : input.model.variant
 			} ;
+
+			return ;
+		}
 		},
 
 		dispose : async () =>
