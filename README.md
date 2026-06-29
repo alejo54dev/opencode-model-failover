@@ -4,7 +4,7 @@ Automatic model failover plugin for [OpenCode](https://opencode.ai). Detects per
 
 ## What it does
 
-When the active model fails with a permanent error (quota exceeded, billing, auth) the plugin immediately aborts the session to skip OpenCode's retry countdown, picks the next eligible fallback, sends a minimal "Continue." re-prompt so the new model picks up the task using the existing conversation context, and logs every decision. Notifications appear in the output message summary. Users can switch models manually with `/models` at any time.
+When the active model fails with a permanent error (quota exceeded, billing, auth) the plugin immediately aborts the session to skip OpenCode's retry countdown, picks the next eligible failover, sends a minimal "Continue." re-prompt so the new model picks up the task using the existing conversation context, and logs every decision. Notifications appear in the output message summary. Users can switch models manually with `/models` at any time.
 
 ## Install
 
@@ -29,7 +29,7 @@ Or set `"enabled": false` in the config.
 ```json
 {
 	"enabled": true,
-	"fallbackChain":
+	"models":
 	[
 		{ "model": "opencode-go/deepseek-v4-flash", "variant": "max" },
 		{ "model": "opencode-go/deepseek-v4-pro", "variant": "medium" },
@@ -43,7 +43,7 @@ Or set `"enabled": false` in the config.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | `boolean` | `true` | Master switch. |
-| `fallbackChain` | `object[]` | `[]` | Ordered fallback entries `{ model, variant? }` where `model` is `"providerID/modelID"`. Variant can be `max`, `high`, `medium`, `low`, etc. |
+| `models` | `object[]` | `[]` | Ordered model entries `{ model, variant? }` where `model` is `"providerID/modelID"`. Variant can be `max`, `high`, `medium`, `low`, etc. |
 | `cooldownMs` | `number` | `30000` | How long a failed model stays marked as unusable (ms). |
 | `logLevel` | `string` | `"info"` | `"error"`, `"info"`, or `"debug"`. |
 
@@ -59,12 +59,12 @@ tail -f ~/.config/opencode/model-failover.log
 
 | Event | Reaction |
 |---|---|
-| Permanent error message (quota, billing, etc.) | Immediate failover — abort session, pick fallback, re-prompt with "Continue." |
+| Permanent error message (quota, billing, etc.) | Immediate failover — abort session, pick failover, re-prompt with "Continue." |
 | Transient errors (network, overload) | Ignored — OpenCode handles its own retries. |
 | 401 / 402 / 403 status codes | Immediate failover. |
 | Next `chat.message` from user with original model | Model silently overridden, summary tagged `⬆️ Failover: A → B`. |
 | User switches model via `/models` | Failover cleared, user's choice respected. |
-| All fallbacks in cooldown or chain empty | Error logged, notification shown. |
+| All failovers in cooldown or chain empty | Error logged, notification shown. |
 
 ## Files
 
