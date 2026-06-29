@@ -182,7 +182,7 @@ function formatModelLabel( ref )
  *	@typedef {{ providerID:string, modelID:string }} ModelRef
  *	@typedef {{ providerID:string, modelID:string, variant?:string }} ModelRefWithVariant
  *	@typedef {{ model:string, variant?:string }} FallbackEntry
- *	@typedef {{ currentModel?:ModelRefWithVariant, failoverModel?:ModelRefWithVariant, failoverError?:string, failoverInProgress:boolean }} SessionState
+ *	@typedef {{ currentModel?:ModelRefWithVariant, currentAgent?:string, failoverModel?:ModelRefWithVariant, failoverError?:string, failoverInProgress:boolean, failoverNotified?:boolean }} SessionState
  */
 
 export default async function plugin( { client } )
@@ -330,6 +330,7 @@ export default async function plugin( { client } )
 							modelID : base.modelID,
 							variant : next.variant
 						},
+						...( s.currentAgent ? { agent : s.currentAgent } : {} ),
 						parts : [
 							{ type : "text", text : `✅ Failover to ${ label }`, ignored : true },
 							{ type : "text", text : "Continue." }
@@ -471,6 +472,11 @@ export default async function plugin( { client } )
 					modelID : input.model.modelID,
 					variant : input.model.variant
 				} ;
+			}
+
+			if ( input.agent )
+			{
+				s.currentAgent = input.agent ;
 			}
 
 		// Fast path: no failover state → nothing to do
