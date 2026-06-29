@@ -242,100 +242,83 @@ export default async function plugin( { client } )
 	/** @type {Map<string, number>} Next chain index per session. Reset on each user message. */
 	const chainIdx = new Map() ;
 
-	/** @type {Set<string>} Prevents concurrent failover processing for a session. */
-	const failoverBusy = new Set() ;
-
 	/**
-	 * Advances the session through the fallback chain in a loop until one
-	 * model succeeds or the chain is exhausted. A processing guard prevents
-	 * concurrent execution for the same session.
+	 * Advances the session one step through the fallback chain.
+	 * Each call picks the current entry, increments the index,
+	 * aborts the failing request, and re-prompts with the fallback model.
+	 * If the re-prompt fails, the next `session.error` event drives
+	 * the cascade to the following entry — no internal loop needed.
 	 *
 	 * @param {string} sessionID
 	 * @returns {Promise<void>}
 	 */
 	async function advanceFailover( sessionID )
 	{
-		if ( failoverBusy.has( sessionID ) ) return ;
-		failoverBusy.add( sessionID ) ;
+		const idx = chainIdx.get( sessionID ) ?? 0 ;
+		const entry = config.fallbackChain[ idx ] ;
+
+		if ( ! entry )
+		{
+			log.error( `chain exhausted for ${ sessionID }` ) ;
+
+			return ;
+		}
+
+		const base = parseModel( entry.model ) ;
+
+		if ( ! base.providerID )
+		{
+			log.error( `bad fallback entry: ${ entry.model }` ) ;
+
+			return ;
+		}
+
+		chainIdx.set( sessionID, idx + 1 ) ;
+
+		const label = formatModelLabel( base, entry.variant ) ;
+
+		log.info( `[${ idx }] ${ label }` ) ;
+
+		await client.session.abort( { path : { id : sessionID } } ).catch( () => {} ) ;
 
 		try
 		{
-			for ( ; ; )
-			{
-				const idx = chainIdx.get( sessionID ) ?? 0 ;
-				const entry = config.fallbackChain[ idx ] ;
-
-				if ( ! entry )
-				{
-					log.error( `chain exhausted for ${ sessionID }` ) ;
-
-					return ;
+			await client.session.prompt( {
+				path : { id : sessionID },
+				body : {
+					model : {
+						providerID : base.providerID,
+						modelID : base.modelID,
+						variant : entry.variant
+					},
+					parts : [
+						{
+							type : "text",
+							text : `✅ Failover to ${ label }`,
+							ignored : true
+						},
+						{ type : "text", text : "Continue." }
+					]
 				}
-
-				const base = parseModel( entry.model ) ;
-
-				if ( ! base.providerID )
-				{
-					log.error( `bad fallback entry: ${ entry.model }` ) ;
-
-					return ;
-				}
-
-				chainIdx.set( sessionID, idx + 1 ) ;
-
-				const label = formatModelLabel( base, entry.variant ) ;
-
-				log.info( `[${ idx }] ${ label }` ) ;
-
-				await client.session.abort( { path : { id : sessionID } } ).catch( () => {} ) ;
-
-				try
-				{
-					await client.session.prompt( {
-						path : { id : sessionID },
-						body : {
-							model : {
-								providerID : base.providerID,
-								modelID : base.modelID,
-								variant : entry.variant
-							},
-							parts : [
-								{
-									type : "text",
-									text : `✅ Failover to ${ label }`,
-									ignored : true
-								},
-								{ type : "text", text : "Continue." }
-							]
-						}
-					} ) ;
-
-					return ; // Success
-				}
-				catch
-				{
-					log.warn( `re-prompt failed for ${ sessionID } (${ label }), trying next` ) ;
-					// Loop continues to the next chain entry
-				}
-			}
+			} ) ;
 		}
-		finally
+		catch
 		{
-			failoverBusy.delete( sessionID ) ;
+			log.warn( `re-prompt failed for ${ sessionID } (${ label }), waiting for event` ) ;
 		}
 	}
 
 	/**
 	 * Handles session events.
 	 *
-	 * - Permanent error (message patterns or 401/402/403): starts failover
+	 * - Permanent error (message patterns or 401/402/403/404): starts failover
 	 *   from the beginning of the chain.
 	 * - Any error while chainIdx > 0 (we are already inside a failover
 	 *   cascade): advances to the next entry.
 	 *
-	 * The actual re-prompt loop lives in `advanceFailover`, which
-	 * iterates through the chain sequentially until one model works
-	 * or the chain is exhausted.
+	 * Each `session.error` event advances one step through the fallback
+	 * chain. The cascade is driven by the event system itself: if the
+	 * fallback model also fails, its `session.error` fires another step.
 	 *
 	 * @param {{ event: Object }} params - The OpenCode event payload.
 	 * @returns {Promise<void>}
@@ -347,7 +330,6 @@ export default async function plugin( { client } )
 		{
 			const id = event.properties?.info?.id ;
 			chainIdx.delete( id ) ;
-			failoverBusy.delete( id ) ;
 
 			return ;
 		}
@@ -426,15 +408,13 @@ export default async function plugin( { client } )
 	}
 
 	/**
-	 * Cleans up on plugin disposal. Clears chain index, failover guard,
-	 * and logs disposal.
+	 * Cleans up on plugin disposal.
 	 *
 	 * @returns {void}
 	 */
 	function onDispose()
 	{
 		chainIdx.clear() ;
-		failoverBusy.clear() ;
 		log.info( "disposed" ) ;
 	}
 
