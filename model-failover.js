@@ -36,7 +36,13 @@ const DEFAULT_PATTERNS = [
 	"insufficient quota",
 	"payment required",
 	"subscription",
-	"subscribe to"
+	"subscribe to",
+	"rate limit",
+	"too many requests",
+	"model not found",
+	"model not supported",
+	"unknown model",
+	"model does not exist"
 ] ;
 
 /** Default settings merged with user overrides from model-failover.json. */
@@ -236,135 +242,205 @@ export default async function plugin( { client } )
 	/** @type {Map<string, number>} Next chain index per session. Reset on each user message. */
 	const chainIdx = new Map() ;
 
-	return {
-		/**
-		 * Handles session events. On permanent error:
-		 *  1. Reads the chain index for this session.
-		 *  2. Picks `fallbackChain[index]`, increments the index.
-		 *  3. Aborts the current request.
-		 *  4. Re-prompts with the fallback model.
-		 */
-		event : async ( { event } ) =>
+	/** @type {Set<string>} Prevents concurrent failover processing for a session. */
+	const failoverBusy = new Set() ;
+
+	/**
+	 * Advances the session through the fallback chain in a loop until one
+	 * model succeeds or the chain is exhausted. A processing guard prevents
+	 * concurrent execution for the same session.
+	 *
+	 * @param {string} sessionID
+	 * @returns {Promise<void>}
+	 */
+	async function advanceFailover( sessionID )
+	{
+		if ( failoverBusy.has( sessionID ) ) return ;
+		failoverBusy.add( sessionID ) ;
+
+		try
 		{
-			// Clean up state when a session is deleted
-			if ( event.type === "session.deleted" )
+			for ( ; ; )
 			{
-				chainIdx.delete( event.properties?.info?.id ) ;
+				const idx = chainIdx.get( sessionID ) ?? 0 ;
+				const entry = config.fallbackChain[ idx ] ;
 
-				return ;
-			}
+				if ( ! entry )
+				{
+					log.error( `chain exhausted for ${ sessionID }` ) ;
 
-			let sessionID = null ;
-			let message = null ;
-			let isFailoverSignal = false ;
-
-			// Extract error info from retry or error events
-			if ( event.type === "session.status" )
-			{
-				const p = event.properties ;
-
-				if ( ! p?.sessionID || p?.status?.type !== "retry" || ! p.status.message ) return ;
-
-				sessionID = p.sessionID ;
-				message = p.status.message ;
-			}
-			else if ( event.type === "session.error" )
-			{
-				const p = event.properties ;
-
-				if ( ! p?.sessionID ) return ;
-				if ( p?.error?.name === "MessageAbortedError" ) return ;
-
-				sessionID = p.sessionID ;
-				message = p?.error?.data?.message ?? null ;
-			}
-			else
-			{
-				return ;
-			}
-
-			if ( ! sessionID ) return ;
-
-			if ( message )
-			{
-				isFailoverSignal = isPermanent( message ) ;
-			}
-
-			// Status code 401/402/403 triggers failover regardless of message
-			if ( ! isFailoverSignal && event.type === "session.error" )
-			{
-				const sc = event.properties?.error?.data?.statusCode ;
-				isFailoverSignal = sc === 401 || sc === 402 || sc === 403 ;
-			}
-
-			if ( ! isFailoverSignal ) return ;
-
-			// Advance through the fallback chain
-			const idx = chainIdx.get( sessionID ) ?? 0 ;
-			const entry = config.fallbackChain[ idx ] ;
-
-			if ( ! entry )
-			{
-				log.error( `chain exhausted for ${ sessionID }` ) ;
-
-				return ;
-			}
-
-			const base = parseModel( entry.model ) ;
-
-			if ( ! base.providerID )
-			{
-				log.error( `bad fallback entry: ${ entry.model }` ) ;
-
-				return ;
-			}
-
-			chainIdx.set( sessionID, idx + 1 ) ;
-
-			const label = formatModelLabel( base, entry.variant ) ;
-
-			log.info( `[${ idx }] ${ label }` ) ;
-
-			// Cancel the current failing request
-			await client.session.abort( { path : { id : sessionID } } ).catch( () => {} ) ;
-
-			// Re-prompt with the fallback model
-			await client.session.prompt( {
-				path : { id : sessionID },
-				body : {
-					model : {
-						providerID : base.providerID,
-						modelID : base.modelID,
-						variant : entry.variant
-					},
-					parts : [
-						{
-							type : "text",
-							text : `✅ Failover to ${ label }`,
-							ignored : true
-						},
-						{ type : "text", text : "Continue." }
-					]
+					return ;
 				}
-			} ).catch( () => log.error( `re-prompt failed for ${ sessionID }` ) ) ;
-		},
 
-		/**
-		 * Intercepts each user message. Resets the chain index so the
-		 * next error cascade starts from the beginning of the fallback chain.
-		 */
-		"chat.message" : async ( input ) =>
-		{
-			if ( input.sessionID ) chainIdx.delete( input.sessionID ) ;
-		},
+				const base = parseModel( entry.model ) ;
 
-		/**
-		 * Cleans up on plugin disposal.
-		 */
-		dispose : async () =>
-		{
-			chainIdx.clear() ;
-			log.info( "disposed" ) ;
+				if ( ! base.providerID )
+				{
+					log.error( `bad fallback entry: ${ entry.model }` ) ;
+
+					return ;
+				}
+
+				chainIdx.set( sessionID, idx + 1 ) ;
+
+				const label = formatModelLabel( base, entry.variant ) ;
+
+				log.info( `[${ idx }] ${ label }` ) ;
+
+				await client.session.abort( { path : { id : sessionID } } ).catch( () => {} ) ;
+
+				try
+				{
+					await client.session.prompt( {
+						path : { id : sessionID },
+						body : {
+							model : {
+								providerID : base.providerID,
+								modelID : base.modelID,
+								variant : entry.variant
+							},
+							parts : [
+								{
+									type : "text",
+									text : `✅ Failover to ${ label }`,
+									ignored : true
+								},
+								{ type : "text", text : "Continue." }
+							]
+						}
+					} ) ;
+
+					return ; // Success
+				}
+				catch
+				{
+					log.warn( `re-prompt failed for ${ sessionID } (${ label }), trying next` ) ;
+					// Loop continues to the next chain entry
+				}
+			}
 		}
+		finally
+		{
+			failoverBusy.delete( sessionID ) ;
+		}
+	}
+
+	/**
+	 * Handles session events.
+	 *
+	 * - Permanent error (message patterns or 401/402/403): starts failover
+	 *   from the beginning of the chain.
+	 * - Any error while chainIdx > 0 (we are already inside a failover
+	 *   cascade): advances to the next entry.
+	 *
+	 * The actual re-prompt loop lives in `advanceFailover`, which
+	 * iterates through the chain sequentially until one model works
+	 * or the chain is exhausted.
+	 *
+	 * @param {{ event: Object }} params - The OpenCode event payload.
+	 * @returns {Promise<void>}
+	 */
+	async function onEvent( { event } )
+	{
+		// Clean up state when a session is deleted
+		if ( event.type === "session.deleted" )
+		{
+			const id = event.properties?.info?.id ;
+			chainIdx.delete( id ) ;
+			failoverBusy.delete( id ) ;
+
+			return ;
+		}
+
+		let sessionID = null ;
+		let message = null ;
+		let isFailoverSignal = false ;
+
+		// Extract error info from retry or error events
+		if ( event.type === "session.status" )
+		{
+			const p = event.properties ;
+
+			if ( ! p?.sessionID || p?.status?.type !== "retry" || ! p.status.message ) return ;
+
+			sessionID = p.sessionID ;
+			message = p.status.message ;
+		}
+		else if ( event.type === "session.error" )
+		{
+			const p = event.properties ;
+
+			if ( ! p?.sessionID ) return ;
+			if ( p?.error?.name === "MessageAbortedError" ) return ;
+
+			sessionID = p.sessionID ;
+			message = p?.error?.data?.message ?? null ;
+		}
+		else
+		{
+			return ;
+		}
+
+		if ( ! sessionID ) return ;
+
+		if ( message )
+		{
+			isFailoverSignal = isPermanent( message ) ;
+		}
+
+		// Status code 401/402/403 triggers failover regardless of message
+		if ( ! isFailoverSignal && event.type === "session.error" )
+		{
+			const sc = event.properties?.error?.data?.statusCode ;
+			isFailoverSignal = sc === 401 || sc === 402 || sc === 403 || sc === 404 ;
+		}
+
+		// Any error while the chain index is > 0 (already in a cascade)
+		// advances to the next fallback entry — regardless of error type.
+		if ( ! isFailoverSignal )
+		{
+			const currentIdx = chainIdx.get( sessionID ) ?? 0 ;
+
+			if ( currentIdx > 0 )
+			{
+				log.debug( `cascade error (idx=${ currentIdx }), advancing chain` ) ;
+				isFailoverSignal = true ;
+			}
+		}
+
+		if ( ! isFailoverSignal ) return ;
+
+		await advanceFailover( sessionID ) ;
+	}
+
+	/**
+	 * Resets the chain index on each user message so the next error
+	 * cascade starts from the beginning of the fallback chain.
+	 *
+	 * @param {{ sessionID?: string }} input - The chat message payload.
+	 * @returns {void}
+	 */
+	function onChatMessage( input )
+	{
+		if ( input.sessionID ) chainIdx.delete( input.sessionID ) ;
+	}
+
+	/**
+	 * Cleans up on plugin disposal. Clears chain index, failover guard,
+	 * and logs disposal.
+	 *
+	 * @returns {void}
+	 */
+	function onDispose()
+	{
+		chainIdx.clear() ;
+		failoverBusy.clear() ;
+		log.info( "disposed" ) ;
+	}
+
+	return {
+		event        : onEvent,
+		"chat.message" : onChatMessage,
+		dispose      : onDispose
 	} ;
 }
