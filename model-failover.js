@@ -367,7 +367,7 @@ class ModelFailoverPlugin
 		}
 
 		this.#log( LOG_LEVEL.ERROR,
-			`Fail ${ failModel ? `: ${ failModel }` : "" } ${ sc != null ? `— ${ sc }` : "" }` ) ;
+			`Fail${ failModel ? `: ${ failModel }` : "" } ${ sc != null ? `— ${ sc }` : "" }` ) ;
 
 		await this.#failover() ;
 	}
