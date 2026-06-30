@@ -27,8 +27,8 @@ A single `Map<sessionID, number>` — each entry stores the current chain index.
 4. `client.session.abort()` cancels the failing request.
 5. `client.session.prompt()` re-prompts with the failover model directly in the API body, sending "✅ Failover model to [label]" + "Continue.".
 6. If `prompt()` throws (failover model also fails), the error is caught, logged as cascading, and the while loop advances to `models[++idx]`.
-7. If the chain exhausts, the session entry is deleted, "❌ Failover chain exhausted" is sent.
-8. Cascade index persists across user messages — no reset. A new `session.error` for the same session will continue from where the chain left off.
+7. If `prompt()` succeeds, the session index is **reset to 0**, so the next error starts fresh from the beginning of the chain. This lets previously-failed models be retried in case they become available again.
+8. If the chain exhausts, the session entry is deleted, "❌ Failover chain exhausted" is sent.
 
 ## Config
 
