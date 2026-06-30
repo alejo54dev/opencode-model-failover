@@ -1,286 +1,334 @@
 /**
-*	model-failover.js
-*
-*	OpenCode plugin — intercepts permanent model errors (HTTP 401/402/403/404)
-*	and fails over through a configured model chain. Also handles cascading
-*	failures: if a failover model itself errors, the chain advances to the next.
-*
-*	## Cascade per session
-*
-*	Per-session state is a single integer index in Map<sessionID>. On each
-*	session.error the failover loop starts from that index, logs the attempt,
-*	increments the index, and tries the next model. If the prompt succeeds the
-*	index is reset to 0 so the next error restarts from the beginning — this
-*	gives previously-failed models a chance to be retried. If the chain
-*	exhausts the session entry is removed.
-*
-*	## Works with any agent/provider
-*
-*	The model is injected directly into the prompt() API body as a per-call
-*	override. No session-level model change is persisted (the OpenCode API
-*	does not support it), so every user prompt that hits a broken model will
-*	trigger the failover flow.
-*
-*	Install: cp model-failover.js ~/.config/opencode/plugins/model-failover.js
-*	Config: ~/.config/opencode/model-failover.json
-*
-*	@name	model-failover
-*	@version	2.1.10
-*	@author	Alejandro Carraretto
-*	@license	MIT
-*/
+ *	model-failover.js
+ *
+ *	OpenCode plugin — intercepts permanent HTTP 4xx errors and fails over
+ *	through a configured chain of models. Every error re-tries the chain
+ *	from the beginning so models that recover are picked up again. On
+ *	success the chain resets; on exhaustion the session is terminated.
+ *
+ *	Install: cp model-failover.js ~/.config/opencode/plugins/model-failover.js
+ *	Config: ~/.config/opencode/model-failover.json
+ *
+ *	@name model-failover
+ *	@version 3.0.0
+ *	@author Alejandro Carraretto
+ *	@license MIT
+ */
 
 import { appendFileSync, existsSync, readFileSync } from "node:fs" ;
 import { homedir } from "node:os" ;
 import { join } from "node:path" ;
 
-/** ~/.config/opencode (or $XDG_CONFIG_HOME/opencode) */
-const CONFIG_DIR = join(
-	process.env.XDG_CONFIG_HOME ?? join( homedir(), ".config" ),
-	"opencode"
-) ;
+// ---------------------------------------------------------------
+// 1. Constants
+// ---------------------------------------------------------------
 
-/** Rank of each log level — lower number = more severe. */
-const LOG_RANK = { error : 0, info : 1, debug : 2 } ;
+const CONFIG_DIR  = join( homedir(),  ".config", "opencode" ) ;
+const CONFIG_FILE = join( CONFIG_DIR, "model-failover.json" ) ;
+const LOG_FILE    = join( CONFIG_DIR, "model-failover.log" ) ;
 
-/**
-*	Creates a file-based logger that appends to model-failover.log inside the
-*	opencode config directory. Respects the configured minimum log level.
-*
-*	@param	{"error"|"info"|"debug"} level — minimum level to emit
-*	@returns	{{ error: Function, info: Function, debug: Function }}
-*/
-function createLogger( level )
+/** Log prefixes for clean, reusable formatting. */
+const LOG = {
+	ERROR : "[ERROR]: ",
+	INFO  : "[INFO]: ",
+	DEBUG : "[DEBUG]: "
+} ;
+
+/** Internal rank for filtering by configured log level. */
+const LOG_RANK = Object.freeze( {
+	"[ERROR]: " : 0,
+	"[INFO]: "  : 1,
+	"[DEBUG]: " : 2
+} ) ;
+
+const CFG_RANK = Object.freeze( {
+	error : 0,
+	info  : 1,
+	debug : 2
+} ) ;
+
+// ---------------------------------------------------------------
+// 2. Global state (live — every field used directly, no locals)
+// ---------------------------------------------------------------
+
+const State = {
+	config        : null,   // { enabled, models, logLevel }
+	sessionID     : null,   // current session being failed over
+	chainIdx      : 0,      // current index in models[] during cascade
+	originalModel : null,   // { providerID, modelID } first model ever seen
+	failoverModel : null,   // { providerID, modelID, variant } last working model
+	lastError     : null,   // { name, statusCode, message }
+	isExhausted   : false,  // flag set when whole chain fails
+	isFailingOver : false   // guard to prevent re-entrant failover
+} ;
+
+// ---------------------------------------------------------------
+// 3. Plugin class
+// ---------------------------------------------------------------
+
+class ModelFailoverPlugin
 {
-	const min = LOG_RANK[ level ] ?? 1 ;
+	#client ;
+	#level ;
 
-	function write( lvl, args )
+	constructor( { client } )
 	{
-		if ( LOG_RANK[ lvl ] > min ) return ;
+		this.#client = client ;
+		this.#loadConfig() ;
+	}
+
+	// -- config ---------------------------------------------------
+
+	#loadConfig()
+	{
+		if ( ! existsSync( CONFIG_FILE ) )
+		{
+			this.#log( LOG.ERROR, `Config not found at ${ CONFIG_FILE }` ) ;
+
+			return ;
+		}
+
+		try
+		{
+			const raw = JSON.parse( readFileSync( CONFIG_FILE, "utf-8" ) ) ;
+			const models = Array.isArray( raw.models )
+				? raw.models.filter(
+					( e ) => typeof e?.model == "string" && e.model != ""
+				)
+				: [ ] ;
+
+			State.config = {
+				enabled  : typeof raw.enabled == "boolean" ? raw.enabled : true,
+				models,
+				logLevel : [ "error", "info", "debug" ].includes( raw.logLevel )
+					? raw.logLevel
+					: "info"
+			} ;
+
+			this.#level = State.config.logLevel ;
+
+			this.#log( LOG.INFO,
+				`Loaded: ${ models.length } models, enabled: ${ State.config.enabled }` ) ;
+		}
+		catch ( err )
+		{
+			this.#log( LOG.ERROR, `Config parse error: ${ err.message }` ) ;
+		}
+	}
+
+	// -- logger ---------------------------------------------------
+
+	#log( prefix, message )
+	{
+		const rank = LOG_RANK[ prefix ] ;
+		const min = CFG_RANK[ this.#level ] ?? 1 ;
+
+		if ( rank == null || rank > min ) return ;
+
 		try
 		{
 			appendFileSync(
-				join( CONFIG_DIR, "model-failover.log" ),
-				`[${ new Date().toISOString() }] [${ lvl.toUpperCase() }] ${ args.join( " " ) }\n`
+				LOG_FILE,
+				`[${ new Date().toISOString() }] ${ prefix }${ message }\n`
 			) ;
 		}
-		catch {}  // Silently ignore write errors (disk full, no perm, etc.)
+		catch {}
 	}
 
-	return {
-		error : ( ...a ) => write( "error", a ),
-		info  : ( ...a ) => write( "info", a ),
-		debug : ( ...a ) => write( "debug", a )
-	} ;
-}
+	// -- helpers ---------------------------------------------------
 
-/**
-*	Loads and validates plugin config from disk.
-*
-*	Reads ~/.config/opencode/model-failover.json. Missing or malformed config
-*	silently falls back to sensible defaults so the plugin never crashes on
-*	startup.
-*
-*	@returns	{{ enabled: boolean, models: Array<{model:string, variant?:string}>, logLevel: string }}
-*/
-function loadConfig()
-{
-	const path = join( CONFIG_DIR, "model-failover.json" ) ;
-
-	// No config file → enabled by default with an empty model list
-	if ( ! existsSync( path ) )
+	#isRetryable( statusCode )
 	{
-		return { enabled : true, models : [ ], logLevel : "info" } ;
+		return statusCode != null && statusCode >= 400 && statusCode < 500 ;
 	}
 
-	try
+	#modelKey( m )
 	{
-		const raw = JSON.parse( readFileSync( path, "utf-8" ) ) ;
-		const models = Array.isArray( raw.models )
-			? raw.models
-				.filter( ( e ) => typeof e?.model == "string" && e.model != "" )
-				.map( ( e ) => ( {
-					model : e.model,
-					variant : typeof e.variant == "string" ? e.variant : undefined
-				} ) )
-			: [ ] ;
-
-		return {
-			enabled : typeof raw.enabled == "boolean" ? raw.enabled : true,
-			models,
-			logLevel : [ "error", "info", "debug" ].includes( raw.logLevel )
-				? raw.logLevel
-				: "info"
-		} ;
-	}
-	catch
-	{
-		// JSON parse error → fall back to defaults
-		return { enabled : true, models : [ ], logLevel : "info" } ;
-	}
-}
-
-/**
-*	Plugin entry point. Called once by the OpenCode runtime.
-*
-*	Returns two hooks:
-*		- `event`   — listens for session.error and session.deleted
-*		- `dispose` — cleans up per-session state
-*
-*	@param	{{ client: import("@opencode-ai/sdk").Client }} param0
-*	@returns	{{ event: Function, dispose: Function }}
-*/
-export default async function plugin( { client } )
-{
-	const config = loadConfig() ;
-	const log = createLogger( config.logLevel ) ;
-
-	/**
-	*	Per-session failover index.
-	*
-	*	Map<sessionID, chainIndex>. Absence means idx=0 (no cascade in
-	*	progress). Index is advanced BEFORE prompting so a failing model
-	*	automatically moves the cursor; on success it is RESET to 0 so the
-	*	next error restarts from the beginning of the chain.
-	*/
-	const sessions = new Map() ;
-
-	log.debug( "INIT:", JSON.stringify( config ) ) ;
-
-	if ( ! config.enabled )
-	{
-		log.info( "Disabled" ) ;
-
-		return {} ;
+		return `${ m.providerID }/${ m.modelID }` ;
 	}
 
-	/**
-	*	Runs the failover cascade: iterates through config.models starting
-	*	from the stored index, aborting the failing request and re-prompting
-	*	with the next model until one succeeds or the chain exhausts.
-	*
-	*	On success the index is reset to 0 (fresh start for next error).
-	*	On full exhaustion the session entry is deleted and a terminal
-	*	"Failover chain exhausted" message is sent.
-	*
-	*	@param	{string} sessionID
-	*	@param	{{ name: string, statusCode: number|null, message: string }} errorInfo
-	*/
-	async function failover( sessionID, errorInfo )
+	/** Human label for a models[] entry. */
+	#entryLabel( entry )
 	{
-		let idx = sessions.get( sessionID ) ?? 0 ;
+		return `${ entry.model }${ entry.variant ? `:${ entry.variant }` : "" }` ;
+	}
 
-		while ( idx < config.models.length )
+	/** Error suffix for log lines. */
+	#errorSuffix()
+	{
+		const e = State.lastError ;
+
+		if ( ! e ) return "" ;
+
+		return `— ${ e.name } ${ e.statusCode > 0 ? `(${ e.statusCode })` : "" }` ;
+	}
+
+	/** Parse slash-delimited model string into providerID/modelID. */
+	#parseModel( entry )
+	{
+		const slash = entry.model.indexOf( "/" ) ;
+
+		return slash == -1
+			? null
+			: {
+				providerID : entry.model.substring( 0, slash ),
+				modelID    : entry.model.substring( slash + 1 )
+			} ;
+	}
+
+	// -- failover cascade ------------------------------------------
+
+	async #failover()
+	{
+		// Chain exhausted — no more models to try
+		if ( State.chainIdx >= State.config.models.length )
 		{
-			const entry = config.models[ idx ] ;
-			const slash = entry.model.indexOf( "/" ) ;
+			State.isExhausted   = true ;
+			State.failoverModel = null ;
 
-			// Models must be "providerID/modelID" format
-			if ( slash == -1 )
-			{
-				log.error( `Bad model at [${ idx }]: ${ entry.model }, skipping` ) ;
-				idx++ ;
-				sessions.set( sessionID, idx ) ;
-				continue ;
-			}
+			this.#log( LOG.ERROR, `Failover chain exhausted ${ this.#errorSuffix() }` ) ;
 
-			// Human-readable label for logs and UI
-			const label = `${ entry.model }${ entry.variant ? `:${ entry.variant }` : "" }` ;
-			const s = errorInfo
-				? `— ${ errorInfo.name } ${ errorInfo.statusCode > 0 ? `(${ errorInfo.statusCode })` : "" }`
-				: "" ;
+			await this.#client.session.abort( { path : { id : State.sessionID } } )
+				.catch( () => {} ) ;
 
-			log.info( `[${ idx }] ${ label } ${ s }` ) ;
+			await this.#client.session.prompt( {
+				path : { id : State.sessionID },
+				body : { parts : [ { type : "text", text : "❌ Failover chain exhausted" } ] }
+			} ).catch( () => {} ) ;
 
-			// Advance index BEFORE attempting so a failing model moves the
-			// cascade forward automatically
-			idx++ ;
-			sessions.set( sessionID, idx ) ;
+			State.isFailingOver = false ;
 
-			// Cancel the in-flight failing request (ignore abort errors)
-			await client.session.abort( { path : { id : sessionID } } ).catch( () => {} ) ;
-
-			try
-			{
-				// Re-prompt with the failover model as a per-call override
-				await client.session.prompt( {
-					path : { id : sessionID },
-					body : {
-						model : {
-							providerID : entry.model.substring( 0, slash ),
-							modelID : entry.model.substring( slash + 1 ),
-							variant : entry.variant
-						},
-						parts : [
-							{ type : "text", text : `✅ Failover model to [${ label }]` },
-							{ type : "text", text : "Continue." }
-						]
-					}
-				} ) ;
-
-				// Reset to start — next error will retry from model 0.
-				// This lets previously-failed models be retried in case
-				// they become available again.
-				sessions.set( sessionID, 0 ) ;
-				return ;
-			}
-			catch ( err )
-			{
-				// Failover model itself failed → log and cascade to next
-				const msg = err?.message ?? String( err ) ;
-				const code = err?.statusCode ?? err?.data?.statusCode ?? "" ;
-
-				log.error(
-					`Prompt failed for ${ sessionID } (${ label }): ${ msg }`
-					+ `${ code ? ` status=${ code }` : "" }, cascading`
-				) ;
-
-				errorInfo = {
-					name : err?.name ?? "PromptError",
-					statusCode : code,
-					message : msg
-				} ;
-				// Loop continues with idx already advanced
-			}
+			return ;
 		}
 
-		// All models exhausted — clean up and send terminal message
-		sessions.delete( sessionID ) ;
+		State.isExhausted   = false ;
+		State.isFailingOver = true ;
 
-		const s = errorInfo
-			? `— ${ errorInfo.name } ${ errorInfo.statusCode > 0 ? `(${ errorInfo.statusCode })` : "" }`
-			: "" ;
+		const idx = State.chainIdx ;
+		const entry = State.config.models[ idx ] ;
+		const parsed = this.#parseModel( entry ) ;
 
-		log.error( `Failover chain exhausted ${ s }` ) ;
+		if ( ! parsed )
+		{
+			this.#log( LOG.ERROR,
+				`Bad model at [${ idx }]: ${ entry.model }, skipping` ) ;
 
-		await client.session.abort( { path : { id : sessionID } } ).catch( () => {} ) ;
+			State.chainIdx++ ;
 
-		await client.session.prompt( {
-			path : { id : sessionID },
-			body : { parts : [ { type : "text", text : "❌ Failover chain exhausted" } ] }
-		} ).catch( () => {} ) ;
+			await this.#failover() ;
+
+			return ;
+		}
+
+		/** Pre-advance chainIdx so the next call starts at the next model. */
+		State.chainIdx++ ;
+
+		const label = this.#entryLabel( entry ) ;
+
+		this.#log( LOG.INFO, `[${ idx }] ${ label } ${ this.#errorSuffix() }` ) ;
+
+		await this.#client.session.abort( { path : { id : State.sessionID } } )
+			.catch( () => {} ) ;
+
+		try
+		{
+			await this.#client.session.prompt( {
+				path : { id : State.sessionID },
+				body : {
+					model : {
+						providerID : parsed.providerID,
+						modelID    : parsed.modelID,
+						variant    : entry.variant
+					},
+					parts : [
+						{ type : "text", text : `✅ Failover model to [${ label }]`, ignored : true },
+						{ type : "text", text : "Continue." }
+					]
+				}
+			} ) ;
+
+			State.failoverModel = {
+				providerID : parsed.providerID,
+				modelID    : parsed.modelID,
+				variant    : entry.variant
+			} ;
+
+			State.isFailingOver = false ;
+
+			this.#log( LOG.INFO,
+				`Success: ${ this.#modelKey( State.failoverModel ) }, chain reset` ) ;
+
+			// chainIdx stays advanced — continuation uses it to find next model.
+		}
+		catch ( err )
+		{
+			const msg = err?.message ?? String( err ) ;
+			const code = err?.statusCode ?? err?.data?.statusCode ?? "" ;
+
+			this.#log( LOG.ERROR,
+				`Prompt failed for ${ State.sessionID } (${ label }): ${ msg }`
+				+ `${ code ? ` status=${ code }` : "" }, cascading` ) ;
+
+			State.lastError = {
+				name       : err?.name ?? "PromptError",
+				statusCode : code,
+				message    : msg
+			} ;
+
+			State.failoverModel = null ;
+
+			// ChainIdx is already advanced — try the next model.
+			await this.#failover() ;
+		}
 	}
 
-	/**
-	*	Handles session events from the runtime.
-	*
-	*	Triggers a failover when:
-	*		- A model returns HTTP 401/402/403/404
-	*		- The session is already mid-cascade (idx > 0) and errors again
-	*
-	*	Ignores MessageAbortedError (intentional user cancellation).
-	*
-	*	Cleans up per-session state on session.deleted.
-	*
-	*	@param	{{ event: import("@opencode-ai/plugin").Event }} param0
-	*/
-	async function onEvent( { event } )
+	// -- hooks -----------------------------------------------------
+
+	async onEvent( { event } )
 	{
 		if ( event.type == "session.deleted" )
 		{
-			const id = event.properties?.info?.id ;
+			if ( State.sessionID )
+			{
+				const p = event.properties ;
+				// v1 uses info.id, v2 uses sessionID
+				const deletedID = p?.info?.id ?? p?.sessionID ;
 
-			if ( id ) sessions.delete( id ) ;
+				if ( deletedID && deletedID !== State.sessionID ) return ;
+			}
+
+			State.sessionID     = null ;
+			State.chainIdx      = 0 ;
+			State.originalModel = null ;
+			State.failoverModel = null ;
+			State.lastError     = null ;
+			State.isExhausted   = false ;
+			State.isFailingOver = false ;
+
+			return ;
+		}
+
+		if ( event.type == "session.status" )
+		{
+			const p = event.properties ;
+
+			if ( ! p?.sessionID || p?.status?.type != "retry" ) return ;
+
+			// Continuation via retry — cascade if we are mid-chain.
+			if ( State.sessionID === p.sessionID && State.chainIdx > 0
+				&& ! State.isExhausted && ! State.isFailingOver )
+			{
+				State.lastError = {
+					name       : "RetryError",
+					statusCode : "",
+					message    : p.status.message ?? ""
+				} ;
+
+				this.#log( LOG.INFO,
+					`Retry at [${ State.chainIdx - 1 }], cascading to [${ State.chainIdx }]` ) ;
+
+				await this.#failover() ;
+			}
 
 			return ;
 		}
@@ -292,29 +340,136 @@ export default async function plugin( { client } )
 			if ( ! p?.sessionID ) return ;
 			if ( p?.error?.name == "MessageAbortedError" ) return ;
 
+			// Re-entrancy guard
+			if ( State.isFailingOver ) return ;
+
+			// Same session continuation — cascade to next model.
+			if ( State.sessionID === p.sessionID )
+			{
+				if ( State.isExhausted ) return ;
+
+				if ( State.chainIdx > 0 )
+				{
+					State.lastError = {
+						name       : p?.error?.name ?? "Error",
+						statusCode : p?.error?.data?.statusCode ?? "",
+						message    : p?.error?.data?.message ?? ""
+					} ;
+
+					// The current failover model just failed — clear it so
+					// onChatMessage doesn't override with a stale/broken model
+					// or misinterpret a runtime retry as a user model change.
+					State.failoverModel = null ;
+
+					this.#log( LOG.INFO,
+						`Failover at [${ State.chainIdx - 1 }] failed,`
+						+ ` cascading to [${ State.chainIdx }]` ) ;
+
+					await this.#failover() ;
+
+					return ;
+				}
+			}
+
+			// Initial failover for a new session error.
 			const sc = p?.error?.data?.statusCode ;
-			const isStatusCodeFail = sc != null && [ 401, 402, 403, 404 ].includes( sc ) ;
-			const inCascade = ( sessions.get( p.sessionID ) ?? 0 ) > 0 ;
 
-			// Only act on permanent HTTP errors or errors during an active cascade
-			if ( ! isStatusCodeFail && ! inCascade ) return ;
+			if ( ! this.#isRetryable( sc ) ) return ;
 
-			await failover( p.sessionID, {
-				name : p.error.name ?? "Error",
+			this.#log( LOG.DEBUG,
+				`session.error: ${ p?.error?.name ?? "Error" } (${ sc })` ) ;
+
+			State.sessionID = p.sessionID ;
+			State.chainIdx  = 0 ;
+			State.lastError = {
+				name       : p?.error?.name ?? "Error",
 				statusCode : sc,
-				message : p?.error?.data?.message ?? ""
-			} ) ;
+				message    : p?.error?.data?.message ?? ""
+			} ;
+
+			await this.#failover() ;
 		}
 	}
 
-	/** Cleans up all session state when the plugin is disposed. */
-	function onDispose()
+	async onChatMessage( input, output )
 	{
-		sessions.clear() ;
+		if ( ! input.sessionID || ! input.model ) return ;
+		if ( ! input.model.providerID || ! input.model.modelID ) return ;
+
+		if ( ! State.originalModel )
+		{
+			State.originalModel = {
+				providerID : input.model.providerID,
+				modelID    : input.model.modelID
+			} ;
+
+			this.#log( LOG.DEBUG,
+				`Original model: ${ this.#modelKey( State.originalModel ) }` ) ;
+
+			return ;
+		}
+
+		if ( ! State.failoverModel ) return ;
+
+		const inputKey    = this.#modelKey( input.model ) ;
+		const originalKey = this.#modelKey( State.originalModel ) ;
+		const failoverKey = this.#modelKey( State.failoverModel ) ;
+
+		if ( inputKey === originalKey )
+		{
+			output.message.model = {
+				providerID : State.failoverModel.providerID,
+				modelID    : State.failoverModel.modelID,
+				variant    : State.failoverModel.variant
+			} ;
+
+			this.#log( LOG.DEBUG, `Override to ${ failoverKey }` ) ;
+
+			return ;
+		}
+
+		if ( inputKey === failoverKey ) return ;
+
+		this.#log( LOG.INFO,
+			`User model change, clearing failover for ${ input.sessionID }` ) ;
+
+		State.chainIdx      = 0 ;
+		State.failoverModel = null ;
+		State.originalModel = {
+			providerID : input.model.providerID,
+			modelID    : input.model.modelID
+		} ;
+	}
+
+	dispose()
+	{
+		State.config        = null ;
+		State.sessionID     = null ;
+		State.chainIdx      = 0 ;
+		State.originalModel = null ;
+		State.failoverModel = null ;
+		State.lastError     = null ;
+		State.isExhausted   = false ;
+		State.isFailingOver = false ;
+	}
+}
+
+// ---------------------------------------------------------------
+// 4. Plugin entry point
+// ---------------------------------------------------------------
+
+export default async function plugin( { client } )
+{
+	const instance = new ModelFailoverPlugin( { client } ) ;
+
+	if ( ! State.config?.enabled )
+	{
+		return {} ;
 	}
 
 	return {
-		event   : onEvent,
-		dispose : onDispose
+		event          : ( e ) => instance.onEvent( e ),
+		"chat.message" : ( i, o ) => instance.onChatMessage( i, o ),
+		dispose        : () => instance.dispose()
 	} ;
 }
