@@ -40,16 +40,16 @@ const LOG_LEVEL =
 
 const State =
 {
-	config        : null,   // { enabled, models, logLevel }
-	sessionID     : null,   // current session being failed over
-	chainIdx      : 0,      // current index in models[] during cascade
-	originalModel : null,   // { providerID, modelID } — logged once, never cleared
-	lastError     : null,   // { name, statusCode, message }
-	isExhausted   : false,  // flag set when whole chain fails
-	isFailingOver : false,  // guard to prevent re-entrant failover
-	cascade       : false,   // signals pending cascade after current attempt
-	deferredError : null,    // session.error captured during cascade
-	deferredRetry : false    // session.status retry captured during cascade
+	config           : null,
+	sessionID        : null,
+	chainIdx         : 0,
+	originalModel    : null,
+	lastError        : null,
+	isExhausted      : false,
+	isFailingOver    : false,
+	currentModelIdx  : -1,
+	currentModelStart : 0,
+	cascadeError     : null
 } ;
 
 // ---------------------------------------------------------------
@@ -153,43 +153,17 @@ class ModelFailoverPlugin
 	}
 
 	// -- failover cascade ------------------------------------------
-
 	async #failover()
 	{
 		if ( State.isFailingOver )
-		{
-			State.cascade = true ;
 			return ;
-		}
 
 		State.isFailingOver = true ;
-		State.cascade       = false ;
 
-		let idx, label ;
-
-		try
+		while ( State.chainIdx < State.config.models.length )
 		{
-			if ( State.chainIdx >= State.config.models.length )
-			{
-				State.isExhausted = true ;
-
-				this.#log( LOG_LEVEL.INFO, `Cascade exhausted` ) ;
-
-				await this.#client.session.abort( { path : { id : State.sessionID } } )
-					.catch( () => {} ) ;
-
-				await this.#client.session.prompt( {
-					path : { id : State.sessionID },
-					body : { parts : [ { type : "text", text : "❌ Failover chain exhausted" } ] }
-				} ).catch( () => {} ) ;
-
-				return ;
-			}
-
-			State.isExhausted = false ;
-
-			idx         = State.chainIdx ;
-			const entry = State.config.models[ idx ] ;
+			const idx    = State.chainIdx ;
+			const entry  = State.config.models[ idx ] ;
 			const parsed = this.#parseModel( entry ) ;
 
 			if ( ! parsed )
@@ -198,86 +172,92 @@ class ModelFailoverPlugin
 					`Bad model at [${ idx }]: ${ entry.model }, skipping` ) ;
 
 				State.chainIdx++ ;
-				State.cascade = true ;
-
-				return ;
+				continue ;
 			}
 
 			State.chainIdx++ ;
-
-			label = this.#entryLabel( entry ) ;
+			const label = this.#entryLabel( entry ) ;
 
 			this.#log( LOG_LEVEL.INFO, `Trying ${ idx }: ${ label }` ) ;
 
 			await this.#client.session.abort( { path : { id : State.sessionID } } )
 				.catch( () => {} ) ;
 
-			const result = await this.#client.session.prompt( {
-				path : { id : State.sessionID },
-				body : {
-					model : {
-						providerID : parsed.providerID,
-						modelID    : parsed.modelID,
-						variant    : entry.variant
-					},
-					parts : [
-						{ type : "text", text : `✅ Failover model to [${ label }]`, ignored : true },
-						{ type : "text", text : "Continue." }
-					]
-				}
-			} ) ;
+			State.currentModelIdx   = idx ;
+			State.currentModelStart = Date.now() ;
+			State.cascadeError      = null ;
 
-			const immediate   = result?.data?.info?.error ;
-			const state       = result?.data?.info?.state ;
-			const deferred    = State.deferredError ;
-			const hasRetry    = State.deferredRetry ;
-			State.deferredError = null ;
-			State.deferredRetry = false ;
+			let result ;
 
-			if ( immediate || deferred || state == "rejected" || hasRetry )
+			try
 			{
-				const code = immediate?.data?.statusCode
-					?? deferred?.statusCode
-					?? "" ;
+				result = await this.#client.session.prompt( {
+					path : { id : State.sessionID },
+					body : {
+						model : {
+							providerID : parsed.providerID,
+							modelID    : parsed.modelID,
+							variant    : entry.variant
+						},
+						parts : [
+							{ type : "text", text : `✅ Failover to [${ label }]`, ignored : true },
+							{ type : "text", text : "Continue." }
+						]
+					}
+				} ) ;
+			}
+			catch ( err )
+			{
+				const msg  = err?.message ?? String( err ) ;
+				const code = err?.statusCode ?? "" ;
 
-				this.#log( LOG_LEVEL.ERROR,
+				State.lastError = {
+					name       : err?.name ?? "PromptError",
+					statusCode : code,
+					message    : msg
+				} ;
+
+				this.#log( LOG_LEVEL.INFO,
 					`Failed ${ idx }: ${ label }${ code ? ` — ${ code }` : "" }` ) ;
 
-				State.cascade = true ;
+				continue ;
 			}
-			else
+
+			const promptError = result?.data?.info?.error ;
+			const asyncError  = State.cascadeError ;
+			const code        = promptError?.data?.statusCode
+			                 ?? asyncError?.statusCode
+			                 ?? "" ;
+
+			if ( promptError || asyncError )
 			{
-				this.#log( LOG_LEVEL.INFO, `Override: ${ label }` ) ;
-				State.cascade = false ;
+				this.#log( LOG_LEVEL.INFO,
+					`Failed ${ idx }: ${ label }${ code ? ` — ${ code }` : "" }` ) ;
+
+				continue ;
 			}
-		}
-		catch ( err )
-		{
-			const msg  = err?.message ?? String( err ) ;
-			const code = err?.statusCode ?? err?.data?.statusCode ?? "" ;
 
-			State.lastError = {
-				name       : err?.name ?? "PromptError",
-				statusCode : code,
-				message    : msg
-			} ;
+			this.#log( LOG_LEVEL.INFO, `Override: ${ label }` ) ;
 
-			this.#log( LOG_LEVEL.ERROR,
-				`Failed ${ idx }: ${ label }${ code ? ` — ${ code }` : "" }` ) ;
+			State.isFailingOver   = false ;
+			State.currentModelIdx = -1 ;
 
-			State.cascade = true ;
-		}
-		finally
-		{
-			State.isFailingOver = false ;
+			return ;
 		}
 
-		if ( State.cascade )
-		{
-			State.cascade = false ;
+		State.isExhausted     = true ;
+		State.isFailingOver   = false ;
+		State.currentModelIdx = -1 ;
 
-			await this.#failover() ;
-		}
+		this.#log( LOG_LEVEL.INFO, `Cascade exhausted` ) ;
+
+		await this.#client.session.abort( { path : { id : State.sessionID } } )
+			.catch( () => {} ) ;
+
+		await this.#client.session.prompt( {
+			path : { id : State.sessionID },
+			body : { parts : [ { type : "text", text : "❌ Failover chain exhausted" } ] }
+		} ).catch( () => {} ) ;
 	}
 
 	// -- hooks -----------------------------------------------------
@@ -298,14 +278,7 @@ class ModelFailoverPlugin
 			if ( ! p?.sessionID ) return ;
 
 			if ( State.isFailingOver )
-			{
-				State.deferredRetry = true ;
-
-				this.#log( LOG_LEVEL.DEBUG,
-					`Event deferred: retry for ${ p.sessionID }` ) ;
-
 				return ;
-			}
 
 			this.#log( LOG_LEVEL.DEBUG, `Cascade retry ${ p.sessionID }` ) ;
 
@@ -326,14 +299,14 @@ class ModelFailoverPlugin
 
 		if ( State.isFailingOver )
 		{
-			State.deferredError = {
-				sessionID  : p.sessionID,
-				statusCode : p?.error?.data?.statusCode ?? 0,
-				message    : p?.error?.data?.message ?? ""
-			} ;
-
-			this.#log( LOG_LEVEL.DEBUG,
-				`Event deferred: session.error for ${ p.sessionID }` ) ;
+			if ( State.currentModelIdx >= 0
+				&& Date.now() - State.currentModelStart > 150 )
+			{
+				State.cascadeError = {
+					statusCode : p?.error?.data?.statusCode ?? 0,
+					message    : p?.error?.data?.message ?? ""
+				} ;
+			}
 
 			return ;
 		}
@@ -369,6 +342,8 @@ class ModelFailoverPlugin
 		this.#log( LOG_LEVEL.ERROR,
 			`Fail${ failModel ? `: ${ failModel }` : "" } ${ sc != null ? `— ${ sc }` : "" }` ) ;
 
+		State.currentModelIdx = -1 ;
+
 		await this.#failover() ;
 	}
 
@@ -378,8 +353,9 @@ class ModelFailoverPlugin
 
 		if ( State.isFailingOver ) return ;
 
-		State.chainIdx  = 0 ;
-		State.lastError = null ;
+		State.chainIdx         = 0 ;
+		State.lastError        = null ;
+		State.currentModelIdx  = -1 ;
 
 		if ( ! State.originalModel && input.model?.providerID && input.model?.modelID )
 		{
@@ -397,14 +373,14 @@ class ModelFailoverPlugin
 	{
 		this.#log( LOG_LEVEL.DEBUG, "State reset" ) ;
 
-		State.sessionID     = null ;
-		State.chainIdx      = 0 ;
-		State.lastError     = null ;
-		State.isExhausted   = false ;
-		State.isFailingOver = false ;
-		State.cascade       = false ;
-		State.deferredError = null ;
-		State.deferredRetry = false ;
+		State.sessionID        = null ;
+		State.chainIdx         = 0 ;
+		State.lastError        = null ;
+		State.isExhausted      = false ;
+		State.isFailingOver    = false ;
+		State.currentModelIdx  = -1 ;
+		State.currentModelStart = 0 ;
+		State.cascadeError     = null ;
 	}
 }
 
