@@ -2,40 +2,33 @@
 
 ## Overview
 
-OpenCode plugin that fails over to a failover model when the active model hits a permanent error (quota, billing, auth) or when OpenCode schedules an automatic retry. Per-session state stored in a `Map<sessionID>`, reset on each user message.
+OpenCode plugin that fails over to a failover model when the active model hits a permanent error (HTTP 401–404) or when a failover model itself errors and the cascade needs to continue. Per-session state is a single `Map<sessionID, number>` storing the current index in the failover chain.
 
 ## Architecture
 
 | File | Role |
 |---|---|
-| `model-failover.js` | Plugin entry point. Exports default async function returning three hooks. |
+| `model-failover.js` | Plugin entry point. Exports default async function returning two hooks. |
 
 ## Hooks
 
-- **`event`** — Listens for `session.deleted`, `session.status` (type "retry"), and `session.error`. On retry or permanent error: reads the chain index from per-session state, picks `models[index]`, increments the index, aborts the current request, re-prompts with the failover model. Also handles `session.deleted` to clean up the per-session state.
-- **`chat.message`** — Resets the chain index, `lastError`, and `triggeredAt` for the session. This ensures each new user message starts a fresh cascade through the failover chain.
+- **`event`** — Listens for `session.deleted` (cleans up per-session state) and `session.error`. On `session.error`: triggers failover if the error has status 401–404, or if the session is already mid-cascade (`idx > 0`). Ignores `MessageAbortedError`.
 - **`dispose`** — Clears the `Map<sessionID>`.
 
 ## State shape
 
-Each entry in the sessions `Map`:
-
-- `idx` (number) — current position in failover chain
-- `busy` (boolean) — re-entrancy guard
-- `cascade` (boolean) — unified flag (replaces old pending/shouldRetry duality)
-- `sessionID` (string) — redundant but explicit
-- `lastError` — `{ name, statusCode, message } | null`, captured from the original error
-- `triggeredAt` — timestamp when the cascade was triggered
+A single `Map<sessionID, number>` — each entry stores the current chain index. If no entry exists, the cascade has not started (idx = 0).
 
 ## Failover flow
 
-1. `session.status("retry")` or `session.error` (status 401-404) detected → `getSession(sessionID)` creates/returns per-session state.
-2. `state.idx` picks `models[idx]`.
-3. `state.idx++` so the next error tries the next entry.
+1. `session.error` with status 401/402/403/404 → `failover(sessionID, errorInfo)` called.
+2. `idx = sessions.get(sessionID) ?? 0` picks `models[idx]`.
+3. Log `[idx] modelName — ErrorName (statusCode)`, increment idx, store idx back.
 4. `client.session.abort()` cancels the failing request.
-5. `client.session.prompt()` re-prompts with the failover model directly in the API body.
-6. If the failover model also fails (prompt throws), `state.cascade = true` → recursive tail call to `failover()` with next idx.
-7. On the next user message (`chat.message`), idx resets to 0, lastError/triggeredAt cleared. The cascade starts from the beginning again.
+5. `client.session.prompt()` re-prompts with the failover model directly in the API body, sending "✅ Failover model to [label]" + "Continue.".
+6. If `prompt()` throws (failover model also fails), the error is caught, logged as cascading, and the while loop advances to `models[++idx]`.
+7. If the chain exhausts, the session entry is deleted, "❌ Failover chain exhausted" is sent.
+8. Cascade index persists across user messages — no reset. A new `session.error` for the same session will continue from where the chain left off.
 
 ## Config
 
