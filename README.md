@@ -1,10 +1,10 @@
 # opencode-model-failover
 
-Automatic model failover plugin for [OpenCode](https://opencode.ai). Detects permanent model failures (HTTP 401–404) and switches the active session to the next model in a configurable chain — transparently and unattended.
+Automatic model failover plugin for [OpenCode](https://opencode.ai). Detects any session.error (except MessageAbortedError) and switches the active session to the next model in a configured chain — transparently and unattended.
 
 ## What it does
 
-When the active model fails with a permanent error (401/402/403/404) the plugin immediately aborts the session, picks the next model in the chain, and sends a "Continue." re-prompt so the new model picks up the task using the existing conversation context. Notifications appear in the output. If a failover model also fails, the cascade continues to the next model in the chain. Every decision is logged.
+When the active model fails with a session.error the plugin immediately aborts the session, picks the next model in the chain, and sends a "Continue." re-prompt so the new model picks up the task using the existing conversation context. Notifications appear in the output. If a failover model also fails, the cascade continues to the next model in the chain. Every decision is logged.
 
 ## Install
 
@@ -57,9 +57,8 @@ tail -f ~/.config/opencode/model-failover.log
 
 | Event | Reaction |
 |---|---|
-| `session.error` with status 401 / 402 / 403 / 404 | Immediate failover — abort session, pick next model, re-prompt with "Continue." |
+| `session.error` (any status code) | Immediate failover — abort session, pick next model, re-prompt with "Continue." |
 | `session.error` while already in a cascade (`idx > 0`) | Cascade continues to the next model in the chain. |
-| `session.error` with other status codes | Ignored (transient errors handled by OpenCode). |
 | `MessageAbortedError` | Ignored. |
 | Failover `prompt()` fails | Error logged, cascade advances to the next model. |
 | Chain exhausted | "❌ Failover chain exhausted" sent to session. |
@@ -67,7 +66,7 @@ tail -f ~/.config/opencode/model-failover.log
 
 ## Version
 
-Current: **v2.0.4** — Module-level functions, unconditional model override, 500 added to fail codes.
+Current: **v2.0.5** — Failover on any session.error (except MessageAbortedError), removed FAIL_CODES filter.
 
 ## Files
 

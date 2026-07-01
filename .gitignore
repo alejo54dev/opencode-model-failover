@@ -10,3 +10,6 @@ dist/
 .handoff/
 .backups/
 .prompt.txt
+
+.gitignore
+AGENTS.md
