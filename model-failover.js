@@ -33,8 +33,6 @@ const LOG_LEVEL =
 	DEBUG : 2
 } ;
 
-const FAIL_CODES = [ 401, 402, 403, 404, 500 ] ;
-
 // ---------------------------------------------------------------
 // STATE — minimal
 // ---------------------------------------------------------------
@@ -265,8 +263,6 @@ async function onEvent( { event }, client )
 		log( LOG_LEVEL.DEBUG, `Stale skip: ${ sc ?? "?" } (override active)` ) ;
 		return ;
 	}
-
-	if ( ! FAIL_CODES.includes( sc ) ) return ;
 
 	STATE.sessionID = sid ;
 

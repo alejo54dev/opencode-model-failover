@@ -2,8 +2,8 @@
 
 ## Overview
 
-OpenCode plugin that fails over through a configured chain of models whenever
-the active model returns a permanent HTTP 4xx/500 (401/402/403/404/500). Uses
+OpenCode plugin that fails over through a configured chain of models on
+any `session.error` (except `MessageAbortedError`). Uses
 module-level `STATE` as the single source of truth — no `Map`, no per-session
 tracking. The cascade starts at index 0 on every trigger. On success the loop
 exits; on exhaustion the session is sent "❌ Failover chain exhausted.".
@@ -29,7 +29,7 @@ Module-level functions:
 - **`event`** — Three branches:
   1. `session.deleted` → `reset()`.
   2. `session.status` with `status.type == "retry"` → capture `sessionID`, call `failover()` (skipped if `isBusy` or `failoverModel` set).
-  3. `session.error` with `statusCode ∈ [401, 402, 403, 404, 500]` and not `MessageAbortedError`:
+  3. `session.error` (any status code) and not `MessageAbortedError`:
      - If `isBusy` → silently drop (for-loop captures failures inline).
      - If `failoverModel` set and same session → stale, drop silently.
      - Otherwise → set `sessionID`, call `failover()`.
