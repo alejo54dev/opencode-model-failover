@@ -67,7 +67,7 @@ tail -f ~/.config/opencode/model-failover.log
 
 ## Version
 
-Current: **v2.0.2** — Add co-author credit.
+Current: **v2.0.4** — Module-level functions, unconditional model override, 500 added to fail codes.
 
 ## Files
 

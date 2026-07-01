@@ -8,7 +8,7 @@
 *	Config:  ~/.config/opencode/model-failover.json
 *
 *	@name model-failover
- *	@version 2.0.3
+*	@version 2.0.4
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -194,12 +194,6 @@ async function failover( sessionID, client )
 			}
 			catch ( err )
 			{
-				if ( err?.name == "MessageAbortedError" )
-				{
-					log( LOG_LEVEL.DEBUG, `Prompt aborted for ${ label }, stopping cascade` ) ;
-					return ;
-				}
-
 				log( LOG_LEVEL.DEBUG, `Prompt threw for ${ label }: ${ err?.message ?? String( err ) }` ) ;
 			}
 		}
