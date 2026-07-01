@@ -10,7 +10,7 @@
 *	Config:  ~/.config/opencode/model-failover.json
 *
 *	@name model-failover
- *	@version 5.2.0
+ *	@version 5.3.0
 *	@author Alejandro Carraretto
 *	@license MIT
 */
@@ -48,9 +48,11 @@ const State =
 	activeModel    : null,   // { providerID, modelID, variant? } — model actually sent in request
 	failoverModel  : null,   // { providerID, modelID, variant? } — last working model
 	lastError      : null,   // { name, statusCode, message }
-	isFailingOver  : false,  // re-entrancy guard for #failover()
-	iterationError : null,   // statusCode captured from session.error during a cascade iteration
-	isExhausted    : false   // informational flag set when the whole chain fails
+	isFailingOver    : false,  // re-entrancy guard for #failover()
+	iterationError   : null,   // statusCode captured from session.error during a cascade iteration
+	isExhausted      : false,  // informational flag set when the whole chain fails
+	cascadeIdx       : 0,      // index for the while loop, persists across re-entrances
+	postOverrideRetry : false   // prevents infinite post-override re-cascade loops
 } ;
 
 // ---------------------------------------------------------------
@@ -156,13 +158,16 @@ class ModelFailoverPlugin
 
 		try
 		{
-			for ( let i = 0 ; i < State.config.models.length ; i ++ )
+			while ( State.cascadeIdx < State.config.models.length )
 			{
 				if ( ! State.sessionID )
 				{
 					this.#log( LOG_LEVEL.DEBUG, "Cascade aborted — session reset" ) ;
 					return ;
 				}
+
+				const i   = State.cascadeIdx ;
+				State.cascadeIdx ++ ;
 
 				const entry = State.config.models[ i ] ;
 				const model = this.#modelFromEntry( entry ) ;
@@ -229,6 +234,7 @@ class ModelFailoverPlugin
 				this.#log( LOG_LEVEL.INFO, `Override: ${ label }` ) ;
 				State.failoverModel = model ;
 				this.#log( LOG_LEVEL.INFO, "Cascade complete" ) ;
+
 				return ;
 			}
 
@@ -263,7 +269,9 @@ class ModelFailoverPlugin
 			const sid = event.properties?.sessionID ;
 			if ( ! sid || State.isFailingOver ) return ;
 
-			State.sessionID = sid ;
+			State.sessionID    = sid ;
+			State.cascadeIdx   = 0 ;
+			State.postOverrideRetry = false ;
 			State.lastError = {
 				name       : "RetryError",
 				statusCode : 0,
@@ -294,15 +302,37 @@ class ModelFailoverPlugin
 			return ;
 		}
 
-		if ( State.failoverModel && event.properties?.sessionID === State.sessionID )
+		if ( State.failoverModel
+			&& ! State.isFailingOver
+			&& event.properties?.sessionID === State.sessionID )
 		{
-			this.#log( LOG_LEVEL.DEBUG,
-				`Stale error skipped: ${ sc } (cascade already complete)` ) ;
+			if ( State.postOverrideRetry )
+			{
+				this.#log( LOG_LEVEL.DEBUG,
+					`Stale error skipped: ${ sc } (already retried)` ) ;
+				return ;
+			}
+
+			this.#log( LOG_LEVEL.INFO,
+				`Post-override fail: ${ sc } — re-cascading` ) ;
+
+			State.postOverrideRetry = true ;
+			State.failoverModel = null ;
+			State.lastError = {
+				name       : err?.name ?? "",
+				statusCode : sc,
+				message    : err?.data?.message ?? ""
+			} ;
+
+			await this.#failover() ;
 			return ;
 		}
 
 		const sid = event.properties?.sessionID ;
 		if ( ! sid ) return ;
+
+		State.cascadeIdx   = 0 ;
+		State.postOverrideRetry = false ;
 
 		State.lastError = {
 			name       : err?.name ?? "",
@@ -325,11 +355,13 @@ class ModelFailoverPlugin
 		if ( ! input.sessionID ) return ;
 		if ( State.isFailingOver ) return ;
 
-		State.sessionID      = null ;
-		State.lastError      = null ;
-		State.iterationError = null ;
-		State.isExhausted    = false ;
-		State.activeModel    = null ;
+		State.sessionID        = null ;
+		State.lastError        = null ;
+		State.iterationError   = null ;
+		State.isExhausted      = false ;
+		State.activeModel      = null ;
+		State.cascadeIdx       = 0 ;
+		State.postOverrideRetry = false ;
 
 		const sel = input.model ;
 
@@ -389,14 +421,16 @@ class ModelFailoverPlugin
 	{
 		this.#log( LOG_LEVEL.DEBUG, "State reset" ) ;
 
-		State.sessionID      = null ;
-		State.originalModel  = null ;
-		State.activeModel    = null ;
-		State.failoverModel  = null ;
-		State.lastError      = null ;
-		State.isFailingOver  = false ;
-		State.iterationError = null ;
-		State.isExhausted    = false ;
+		State.sessionID        = null ;
+		State.originalModel    = null ;
+		State.activeModel      = null ;
+		State.failoverModel    = null ;
+		State.lastError        = null ;
+		State.isFailingOver    = false ;
+		State.iterationError   = null ;
+		State.isExhausted      = false ;
+		State.cascadeIdx       = 0 ;
+		State.postOverrideRetry = false ;
 	}
 }
 
