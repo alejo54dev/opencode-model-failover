@@ -8,7 +8,7 @@
 *	Config:  ~/.config/opencode/model-failover.json
 *
 *	@name model-failover
- *	@version 2.0.2
+ *	@version 2.0.3
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -165,19 +165,26 @@ async function failover( sessionID, client )
 					}
 				} ) ;
 
-				const info = result?.data?.info ;
+				const info  = result?.data?.info ;
+				const state = info?.state ;
 
-				if ( result?.error || info?.error )
+				const errMsg = info?.error?.data?.message
+					?? info?.error?.message
+					?? result?.error?.data?.message
+					?? result?.error?.message
+					?? "" ;
+
+				if ( errMsg == "Aborted" )
 				{
-					log( LOG_LEVEL.DEBUG,
-						`Response error for ${ label }: ${ info?.error?.data?.message ?? "unknown" }`
-					) ;
-					continue ;
+					log( LOG_LEVEL.DEBUG, `Prompt aborted for ${ label }, stopping cascade` ) ;
+					return ;
 				}
 
-				if ( info?.state && info.state != "ok" )
+				if ( errMsg || ( state && state != "ok" ) )
 				{
-					log( LOG_LEVEL.DEBUG, `Response state=${ info.state } for ${ label }` ) ;
+					log( LOG_LEVEL.DEBUG,
+						`Response error for ${ label }: ${ errMsg || state || "unknown" }`
+					) ;
 					continue ;
 				}
 
@@ -315,10 +322,7 @@ function onChatMessage( input, output )
 
 	if ( ! STATE.failoverModel || ! output?.message?.model ) return ;
 
-	if ( sel.providerID == orig.providerID && sel.modelID == orig.modelID && sel.variant == orig.variant )
-	{
-		output.message.model = { ...STATE.failoverModel } ;
-	}
+	output.message.model = { ...STATE.failoverModel } ;
 }
 
 function reset()
