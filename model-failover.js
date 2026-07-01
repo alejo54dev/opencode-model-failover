@@ -8,7 +8,7 @@
 *	Config:  ~/.config/opencode/model-failover.json
 *
 *	@name model-failover
-*	@version 2.0.4
+*	@version 2.0.5
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -188,6 +188,7 @@ async function failover( sessionID, client )
 
 				log( LOG_LEVEL.INFO, `Override: ${ label }` ) ;
 				STATE.failoverModel = model ;
+
 				return ;
 			}
 			catch ( err )
