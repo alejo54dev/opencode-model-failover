@@ -67,7 +67,7 @@ tail -f ~/.config/opencode/model-failover.log
 
 ## Version
 
-Current: **v2.0.1** — Simplified error extraction to single property path `info?.error?.data?.message ?? "unknown"`.
+Current: **v2.0.2** — Add co-author credit.
 
 ## Files
 

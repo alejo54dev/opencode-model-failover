@@ -8,8 +8,9 @@
 *	Config:  ~/.config/opencode/model-failover.json
 *
 *	@name model-failover
- *	@version 2.0.1
+ *	@version 2.0.2
 *	@author Alejandro Carraretto
+*	@author DeepSeek-V4
 *	@license MIT
 */
 
