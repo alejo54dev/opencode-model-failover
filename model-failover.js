@@ -10,7 +10,7 @@
 *	Config:  ~/.config/opencode/model-failover.json
 *
 *	@name model-failover
- *	@version 5.1.0
+ *	@version 5.1.1
 *	@author Alejandro Carraretto
 *	@license MIT
 */
@@ -150,6 +150,9 @@ class ModelFailoverPlugin
 
 		State.isFailingOver = true ;
 
+		this.#log( LOG_LEVEL.INFO,
+			`Cascade started (${ State.config.models.length } models)` ) ;
+
 		try
 		{
 			for ( let i = 0 ; i < State.config.models.length ; i ++ )
@@ -195,16 +198,16 @@ class ModelFailoverPlugin
 						? err.statusCode
 						: "throw" ;
 					this.#log( LOG_LEVEL.DEBUG,
-						`prompt() threw for ${ label }: ${ err?.message ?? err }` ) ;
+						`Prompt threw for ${ label }: ${ err?.message ?? String( err ) }` ) ;
 				}
 
 				if ( ! State.iterationError && result )
 				{
 					if ( result?.data?.info?.error )
 					{
-						State.iterationError = result.data.info.error.statusCode ?? "error" ;
+						State.iterationError = result.data.info.error.statusCode ?? "response" ;
 						this.#log( LOG_LEVEL.DEBUG,
-							`Response error for ${ label }: ${ result.data.info.error.message ?? result.data.info.error.statusCode }` ) ;
+							`Response error for ${ label }: ${ result.data.info.error.message ?? result.data.info.error.statusCode ?? "unknown" }` ) ;
 					}
 					else if ( result?.data?.info?.state == "rejected" )
 					{
@@ -224,6 +227,7 @@ class ModelFailoverPlugin
 
 				this.#log( LOG_LEVEL.INFO, `Override: ${ label }` ) ;
 				State.failoverModel = model ;
+				this.#log( LOG_LEVEL.INFO, "Cascade complete" ) ;
 				return ;
 			}
 
@@ -286,6 +290,13 @@ class ModelFailoverPlugin
 				this.#log( LOG_LEVEL.DEBUG, `Deferred: ${ sc } during cascade` ) ;
 			}
 
+			return ;
+		}
+
+		if ( State.failoverModel && event.properties?.sessionID === State.sessionID )
+		{
+			this.#log( LOG_LEVEL.DEBUG,
+				`Stale error skipped: ${ sc } (cascade already complete)` ) ;
 			return ;
 		}
 
