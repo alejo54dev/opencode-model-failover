@@ -2,45 +2,110 @@
 
 ## Overview
 
-OpenCode plugin that fails over to a failover model when the active model hits a permanent error (HTTP 4xx) or when a failover model itself errors and the cascade needs to continue. Uses module-level global state (no Map, no per-session tracking). On each cascade the chain is traversed from index 0; on success the pointer resets so every error retries the full chain.
+OpenCode plugin that fails over through a configured chain of models whenever
+the active model returns a permanent HTTP 4xx (401/402/403/404). Uses module-level
+global `State` as the single source of truth — no `Map`, no per-session tracking.
+The cascade starts at index 0 on every trigger, so models that recover are picked
+up again. On success the loop exits; on exhaustion the session is terminated
+with a fixed message.
 
 ## Architecture
 
 | File | Role |
 |---|---|
-| `model-failover.js` | Plugin entry point. Exports default async function returning three hooks. `class ModelFailoverPlugin` with private fields/methods. |
+| `model-failover.js` | Single-file plugin. Default export returns three hooks. `class ModelFailoverPlugin` with private helpers. |
+
+The whole plugin is one class with five private helpers and three public hooks:
+
+- Private: `#loadConfig`, `#log`, `#labelFromEntry`, `#modelFromEntry`, `#failover`
+- Public: `onEvent`, `onChatMessage`, `reset`
 
 ## Hooks
 
-- **`event`** — Listens for `session.deleted` (clears all runtime State) and `session.error`. On `session.error`: sets `State.sessionID` / `State.lastError`, triggers `#failover()` if `statusCode >= 400 && < 500` and `State.isFailingOver` is false. Ignores `MessageAbortedError`.
-- **`chat.message`** — Intercepts every user message. Captures `State.originalModel` on first message seen. If `State.failoverModel` is set and `input.model` matches the original, overrides `output.message.model` to the failover model. Clears failover state if the user manually changes the model.
-- **`dispose`** — Resets all State fields to null/0/false.
+- **`event`** — Three branches, no nesting beyond one level:
+  1. `session.deleted` → `reset()`.
+  2. `session.status` with `status.type == "retry"` → capture `sessionID`, call `#failover()` (skipped if already in cascade).
+  3. `session.error` with `statusCode ∈ [401, 402, 403, 404]` and not `MessageAbortedError`:
+     - If `State.isFailingOver` → set `State.iterationError = sc` (signal for the running loop).
+     - Otherwise → set `State.sessionID` / `State.lastError`, log fail, call `#failover()`.
+- **`chat.message`** — Clears per-turn state (`sessionID`, `lastError`, `isExhausted`). Captures `State.originalModel` on first message. If a `failoverModel` is set, overrides `output.message.model` when the message still references the original model. Detects user-initiated model change and resets failover.
+- **`dispose`** — Resets all `State` fields.
 
 ## Global state
 
 ```
 State = {
-    config:        object|null,  // { enabled, models, logLevel }
-    sessionID:     string|null,  // current session being failed over
-    chainIdx:      number,       // current index in models[] during cascade
-    originalModel: object|null,  // { provider, model } first model seen
-    failoverModel: object|null,  // { provider, model, variant? } last working model
-    lastError:     object|null,  // { name, statusCode, message }
-    isExhausted:   boolean,      // true when whole chain fails
-    isFailingOver: boolean       // guard to prevent re-entrant failover
+    config         : object|null,   // { enabled, models, logLevel }
+    sessionID      : string|null,   // session currently being failed over
+    originalModel  : object|null,   // { providerID, modelID } first model seen
+    failoverModel  : object|null,   // { providerID, modelID, variant? } last working model
+    lastError      : object|null,   // { name, statusCode, message }
+    isFailingOver  : boolean,       // re-entrancy guard for #failover()
+    iterationError : number|null,   // statusCode captured from session.error during a cascade iteration
+    isExhausted    : boolean        // informational flag set when the whole chain fails
 }
 ```
 
-All runtime state lives in `State`. Methods reference it directly — no parameters passed to `#failover()`.
+All runtime state lives in `State`. Methods reference it directly — no parameters
+passed to `#failover()`.
 
-## Failover flow (within one message turn)
+## `#failover()` — the one and only loop
 
-1. `session.error` with `statusCode >= 400 && < 500` → `State.sessionID` / `State.lastError` set, `#failover()` called with no arguments.
-2. Loop `State.chainIdx = 0` through `State.config.models[]`:
-   - `abort()` cancels failing request, `prompt()` called with failover model.
-   - If `prompt()` succeeds: `State.failoverModel` saved, loop exits.
-   - If `prompt()` throws: `State.chainIdx++`, loop continues.
-3. If all models exhausted: `State.isExhausted = true`, `State.failoverModel = null`, "❌ Failover chain exhausted" sent.
+```js
+async #failover() {
+    if (State.isFailingOver) return;
+    if (!State.config?.models?.length) return;
+    State.isFailingOver = true;
+    try {
+        for (let i = 0; i < State.config.models.length; i++) {
+            const entry  = State.config.models[i];
+            const model  = this.#modelFromEntry(entry);
+            const label  = this.#labelFromEntry(entry);
+            State.iterationError = null;
+            this.#log(INFO, `Trying ${i}: ${label}`);
+            try {
+                await this.#client.session.prompt({
+                    path: { id: State.sessionID },
+                    body: {
+                        model,
+                        parts: [
+                            { type: "text", text: `✅ Failover to [${label}]`, ignored: true },
+                            { type: "text", text: "Continue." }
+                        ]
+                    }
+                });
+            } catch (err) {
+                State.iterationError = err?.statusCode ?? "throw";
+                this.#log(DEBUG, `prompt() threw for ${label}: ${err?.message ?? err}`);
+            }
+            await new Promise(r => setTimeout(r, 300));   // let session.error drain
+            if (State.iterationError) {
+                this.#log(INFO, `Failed ${i}: ${label} — ${State.iterationError}`);
+                continue;
+            }
+            this.#log(INFO, `Override: ${label}`);
+            State.failoverModel = model;
+            return;
+        }
+        State.isExhausted = true;
+        this.#log(INFO, "Cascade exhausted");
+        await this.#client.session.prompt({
+            path: { id: State.sessionID },
+            body: { parts: [{ type: "text", text: "❌ Failover chain exhausted" }] }
+        }).catch(() => {});
+    } finally {
+        State.isFailingOver = false;
+    }
+}
+```
+
+## Error-detection model (single mechanism)
+
+The only signal of failure is `session.error` events. When one fires during a
+cascade, `onEvent` sets `State.iterationError`. The `#failover()` loop checks
+`State.iterationError` after a 300 ms wait post-`prompt()` (giving the event
+loop time to drain any in-flight `session.error`). The wait is defensive — in
+practice the event arrives inside the `await prompt()` window.
 
 ## chat.message override flow (across messages)
 
@@ -48,7 +113,7 @@ All runtime state lives in `State`. Methods reference it directly — no paramet
 2. After a cascade saves `State.failoverModel`:
    - If `input.model` matches `State.originalModel` → override to `State.failoverModel`.
    - If `input.model` already matches `State.failoverModel` → nothing to do.
-   - If matches neither → user changed model → state cleared, `State.originalModel` updated.
+   - If matches neither → user changed model → failover cleared, `State.originalModel` updated.
 3. Failover persists until chain exhausts or user changes model.
 
 ## Config
@@ -63,4 +128,5 @@ All runtime state lives in `State`. Methods reference it directly — no paramet
 
 - Tabs for indentation, Allman braces, spaces inside parens/brackets, space before semicolons.
 - English-only artifacts.
-- No public properties, no `global`, composition over inheritance.
+- No public properties on the class except the three hooks, no `global`, composition over inheritance.
+- Detection of failures is centralised on `session.error` events — no inspection of `result.data.info.error`, no retry-event polling.
