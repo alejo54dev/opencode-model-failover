@@ -10,7 +10,7 @@
 *	Config:  ~/.config/opencode/model-failover.json
 *
 *	@name model-failover
- *	@version 5.1.1
+ *	@version 5.2.0
 *	@author Alejandro Carraretto
 *	@license MIT
 */
@@ -44,7 +44,8 @@ const State =
 {
 	config         : null,   // { enabled, models, logLevel }
 	sessionID      : null,   // session currently being failed over
-	originalModel  : null,   // { providerID, modelID } — first model seen
+	originalModel  : null,   // { providerID, modelID, variant? } — user's TUI selection
+	activeModel    : null,   // { providerID, modelID, variant? } — model actually sent in request
 	failoverModel  : null,   // { providerID, modelID, variant? } — last working model
 	lastError      : null,   // { name, statusCode, message }
 	isFailingOver  : false,  // re-entrancy guard for #failover()
@@ -311,8 +312,10 @@ class ModelFailoverPlugin
 
 		State.sessionID = sid ;
 
+		const logModel = State.activeModel ?? State.originalModel ;
+
 		this.#log( LOG_LEVEL.ERROR,
-			`Fail: ${ State.originalModel?.providerID ?? "?" }/${ State.originalModel?.modelID ?? "?" } — ${ sc }` ) ;
+			`Fail: ${ logModel?.providerID ?? "?" }/${ logModel?.modelID ?? "?" } — ${ sc }` ) ;
 
 		await this.#failover() ;
 	}
@@ -326,42 +329,59 @@ class ModelFailoverPlugin
 		State.lastError      = null ;
 		State.iterationError = null ;
 		State.isExhausted    = false ;
+		State.activeModel    = null ;
 
-		if ( ! State.originalModel && input.model?.providerID && input.model?.modelID )
+		const sel = input.model ;
+
+		if ( ! sel?.providerID || ! sel?.modelID ) return ;
+
+		State.activeModel = {
+			providerID : sel.providerID,
+			modelID    : sel.modelID,
+			variant    : sel.variant
+		} ;
+
+		if ( ! State.originalModel )
 		{
 			State.originalModel = {
-				providerID : input.model.providerID,
-				modelID    : input.model.modelID,
-				variant    : input.model.variant
+				providerID : sel.providerID,
+				modelID    : sel.modelID,
+				variant    : sel.variant
 			} ;
 
 			this.#log( LOG_LEVEL.INFO,
 				`Current model: ${ State.originalModel.providerID }/${ State.originalModel.modelID }` ) ;
 		}
 
-		if ( ! State.failoverModel || ! output?.message?.model ) return ;
-
-		const msg  = output.message.model ;
 		const orig = State.originalModel ;
-		const fm   = State.failoverModel ;
 
 		if ( orig
-			&& msg.providerID == orig.providerID
-			&& msg.modelID    == orig.modelID
-			&& msg.variant    == orig.variant )
-		{
-			output.message.model = { ...fm } ;
-		}
-		else if ( msg.providerID != fm.providerID
-			|| msg.modelID    != fm.modelID
-			|| msg.variant    != fm.variant )
+			&& ( sel.providerID != orig.providerID
+				|| sel.modelID    != orig.modelID
+				|| sel.variant    != orig.variant ) )
 		{
 			State.failoverModel = null ;
 			State.originalModel = {
-				providerID : msg.providerID,
-				modelID    : msg.modelID,
-				variant    : msg.variant
+				providerID : sel.providerID,
+				modelID    : sel.modelID,
+				variant    : sel.variant
 			} ;
+
+			this.#log( LOG_LEVEL.INFO,
+				`Model changed: ${ State.originalModel.providerID }/${ State.originalModel.modelID }` ) ;
+			return ;
+		}
+
+		if ( ! State.failoverModel || ! output?.message?.model ) return ;
+
+		const fm = State.failoverModel ;
+
+		if ( sel.providerID == orig.providerID
+			&& sel.modelID    == orig.modelID
+			&& sel.variant    == orig.variant )
+		{
+			output.message.model = { ...fm } ;
+			State.activeModel    = { ...fm } ;
 		}
 	}
 
@@ -371,6 +391,7 @@ class ModelFailoverPlugin
 
 		State.sessionID      = null ;
 		State.originalModel  = null ;
+		State.activeModel    = null ;
 		State.failoverModel  = null ;
 		State.lastError      = null ;
 		State.isFailingOver  = false ;

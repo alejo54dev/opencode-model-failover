@@ -29,7 +29,7 @@ The whole plugin is one class with five private helpers and three public hooks:
      - If `State.isFailingOver` and same session → set `State.iterationError = sc` (signal for the running loop).
      - If `State.isFailingOver` but different session → silently drop.
      - Otherwise → set `State.sessionID` / `State.lastError`, log fail, call `#failover()`.
-- **`chat.message`** — Clears per-turn state (`sessionID`, `lastError`, `iterationError`, `isExhausted`). Captures `State.originalModel` (incl. variant) on first message. If a `failoverModel` is set, overrides `output.message.model` when the message still references the original model (provider + model + variant match). Detects user-initiated model change and resets failover.
+- **`chat.message`** — Clears per-turn state (`sessionID`, `lastError`, `iterationError`, `isExhausted`, `activeModel`). Captures `State.originalModel` (incl. variant) on first message. Sets `State.activeModel` to the model that will actually be sent (post-override if applicable). Always detects user-initiated model changes against `input.model` and clears failover. When `failoverModel` is set, overrides `output.message.model` if `input.model` still matches the original model (provider + model + variant match).
 - **`dispose`** — Resets all `State` fields.
 
 ## Global state
@@ -38,7 +38,8 @@ The whole plugin is one class with five private helpers and three public hooks:
 State = {
     config         : object|null,   // { enabled, models, logLevel }
     sessionID      : string|null,   // session currently being failed over
-    originalModel  : object|null,   // { providerID, modelID, variant? } first model seen
+    originalModel  : object|null,   // { providerID, modelID, variant? } user's TUI selection
+    activeModel    : object|null,   // { providerID, modelID, variant? } model actually sent
     failoverModel  : object|null,   // { providerID, modelID, variant? } last working model
     lastError      : object|null,   // { name, statusCode, message }
     isFailingOver  : boolean,       // re-entrancy guard for #failover()
@@ -119,12 +120,19 @@ The dual approach closes the race window where an error could fire between the `
 
 ## chat.message override flow (across messages)
 
-1. First message ever: `State.originalModel` captured from `input.model`. No override.
-2. After a cascade saves `State.failoverModel`:
-   - If `input.model` matches `State.originalModel` → override to `State.failoverModel`.
-   - If `input.model` already matches `State.failoverModel` → nothing to do.
-   - If matches neither → user changed model → failover cleared, `State.originalModel` updated.
-3. Failover persists until chain exhausts or user changes model.
+1. Per-turn state cleared (`sessionID`, `lastError`, `iterationError`, `isExhausted`).
+2. First message ever: `State.originalModel` captured from `input.model`.
+3. Model-change detection (always, independent of failover state):
+   - If `input.model` differs from `State.originalModel` → failover cleared,
+     `State.originalModel` updated, logged `"Model changed"`, return (no override).
+4. Override (only when `State.failoverModel` is set):
+   - If `input.model` matches `State.originalModel` → `output.message.model` overridden
+     to `State.failoverModel`.
+   - Otherwise nothing to do (user already on failover model, no match needed).
+
+Comparisons always use `input.model` (the user's TUI selection), never
+`output.message.model` (which reflects session state and may be stale after
+a previous override).
 
 ## Config
 
