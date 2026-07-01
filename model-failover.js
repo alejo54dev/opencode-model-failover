@@ -10,7 +10,7 @@
 *	Config:  ~/.config/opencode/model-failover.json
 *
 *	@name model-failover
-*	@version 5.0.0
+ *	@version 5.1.0
 *	@author Alejandro Carraretto
 *	@license MIT
 */
@@ -146,9 +146,7 @@ class ModelFailoverPlugin
 	{
 		if ( State.isFailingOver ) return ;
 		if ( ! State.config?.models?.length ) return ;
-
-		const sessionID = State.sessionID ;
-		if ( ! sessionID ) return ;
+		if ( ! State.sessionID ) return ;
 
 		State.isFailingOver = true ;
 
@@ -156,6 +154,12 @@ class ModelFailoverPlugin
 		{
 			for ( let i = 0 ; i < State.config.models.length ; i ++ )
 			{
+				if ( ! State.sessionID )
+				{
+					this.#log( LOG_LEVEL.DEBUG, "Cascade aborted — session reset" ) ;
+					return ;
+				}
+
 				const entry = State.config.models[ i ] ;
 				const model = this.#modelFromEntry( entry ) ;
 				const label = this.#labelFromEntry( entry ) ;
@@ -170,10 +174,12 @@ class ModelFailoverPlugin
 				State.iterationError = null ;
 				this.#log( LOG_LEVEL.INFO, `Trying ${ i }: ${ label }` ) ;
 
+				let result ;
+
 				try
 				{
-					await this.#client.session.prompt( {
-						path : { id : sessionID },
+					result = await this.#client.session.prompt( {
+						path : { id : State.sessionID },
 						body : {
 							model,
 							parts : [
@@ -185,9 +191,26 @@ class ModelFailoverPlugin
 				}
 				catch ( err )
 				{
-					State.iterationError = err?.statusCode ?? "throw" ;
+					State.iterationError = ( err?.statusCode != null && err.statusCode !== 0 )
+						? err.statusCode
+						: "throw" ;
 					this.#log( LOG_LEVEL.DEBUG,
 						`prompt() threw for ${ label }: ${ err?.message ?? err }` ) ;
+				}
+
+				if ( ! State.iterationError && result )
+				{
+					if ( result?.data?.info?.error )
+					{
+						State.iterationError = result.data.info.error.statusCode ?? "error" ;
+						this.#log( LOG_LEVEL.DEBUG,
+							`Response error for ${ label }: ${ result.data.info.error.message ?? result.data.info.error.statusCode }` ) ;
+					}
+					else if ( result?.data?.info?.state == "rejected" )
+					{
+						State.iterationError = "rejected" ;
+						this.#log( LOG_LEVEL.DEBUG, `Response rejected for ${ label }` ) ;
+					}
 				}
 
 				await new Promise( r => setTimeout( r, 300 ) ) ;
@@ -204,11 +227,12 @@ class ModelFailoverPlugin
 				return ;
 			}
 
-			State.isExhausted = true ;
+			State.isExhausted    = true ;
+			State.failoverModel  = null ;
 			this.#log( LOG_LEVEL.INFO, "Cascade exhausted" ) ;
 
 			await this.#client.session.prompt( {
-				path : { id : sessionID },
+				path : { id : State.sessionID },
 				body : { parts : [ { type : "text", text : "❌ Failover chain exhausted" } ] }
 			} ).catch( () => {} ) ;
 		}
@@ -235,6 +259,12 @@ class ModelFailoverPlugin
 			if ( ! sid || State.isFailingOver ) return ;
 
 			State.sessionID = sid ;
+			State.lastError = {
+				name       : "RetryError",
+				statusCode : 0,
+				message    : event.properties?.status?.reason ?? ""
+			} ;
+
 			this.#log( LOG_LEVEL.DEBUG, `Cascade retry ${ sid }` ) ;
 			await this.#failover() ;
 			return ;
@@ -248,20 +278,27 @@ class ModelFailoverPlugin
 		const sc = err?.data?.statusCode ;
 		if ( ! FAIL_CODES.includes( sc ) ) return ;
 
+		if ( State.isFailingOver )
+		{
+			if ( event.properties.sessionID === State.sessionID )
+			{
+				State.iterationError = sc ;
+				this.#log( LOG_LEVEL.DEBUG, `Deferred: ${ sc } during cascade` ) ;
+			}
+
+			return ;
+		}
+
+		const sid = event.properties?.sessionID ;
+		if ( ! sid ) return ;
+
 		State.lastError = {
 			name       : err?.name ?? "",
 			statusCode : sc,
 			message    : err?.data?.message ?? ""
 		} ;
 
-		if ( State.isFailingOver )
-		{
-			State.iterationError = sc ;
-			this.#log( LOG_LEVEL.DEBUG, `Deferred: ${ sc } during cascade` ) ;
-			return ;
-		}
-
-		State.sessionID = event.properties.sessionID ;
+		State.sessionID = sid ;
 
 		this.#log( LOG_LEVEL.ERROR,
 			`Fail: ${ State.originalModel?.providerID ?? "?" }/${ State.originalModel?.modelID ?? "?" } — ${ sc }` ) ;
@@ -274,15 +311,17 @@ class ModelFailoverPlugin
 		if ( ! input.sessionID ) return ;
 		if ( State.isFailingOver ) return ;
 
-		State.sessionID   = null ;
-		State.lastError   = null ;
-		State.isExhausted = false ;
+		State.sessionID      = null ;
+		State.lastError      = null ;
+		State.iterationError = null ;
+		State.isExhausted    = false ;
 
 		if ( ! State.originalModel && input.model?.providerID && input.model?.modelID )
 		{
 			State.originalModel = {
 				providerID : input.model.providerID,
-				modelID    : input.model.modelID
+				modelID    : input.model.modelID,
+				variant    : input.model.variant
 			} ;
 
 			this.#log( LOG_LEVEL.INFO,
@@ -295,16 +334,22 @@ class ModelFailoverPlugin
 		const orig = State.originalModel ;
 		const fm   = State.failoverModel ;
 
-		if ( orig && msg.providerID == orig.providerID && msg.modelID == orig.modelID )
+		if ( orig
+			&& msg.providerID == orig.providerID
+			&& msg.modelID    == orig.modelID
+			&& msg.variant    == orig.variant )
 		{
 			output.message.model = { ...fm } ;
 		}
-		else if ( msg.providerID != fm.providerID || msg.modelID != fm.modelID )
+		else if ( msg.providerID != fm.providerID
+			|| msg.modelID    != fm.modelID
+			|| msg.variant    != fm.variant )
 		{
 			State.failoverModel = null ;
 			State.originalModel = {
 				providerID : msg.providerID,
-				modelID    : msg.modelID
+				modelID    : msg.modelID,
+				variant    : msg.variant
 			} ;
 		}
 	}

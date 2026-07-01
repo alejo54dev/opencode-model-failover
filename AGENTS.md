@@ -24,11 +24,12 @@ The whole plugin is one class with five private helpers and three public hooks:
 
 - **`event`** — Three branches, no nesting beyond one level:
   1. `session.deleted` → `reset()`.
-  2. `session.status` with `status.type == "retry"` → capture `sessionID`, call `#failover()` (skipped if already in cascade).
+  2. `session.status` with `status.type == "retry"` → capture `sessionID`, set `State.lastError`, call `#failover()` (skipped if already in cascade).
   3. `session.error` with `statusCode ∈ [401, 402, 403, 404]` and not `MessageAbortedError`:
-     - If `State.isFailingOver` → set `State.iterationError = sc` (signal for the running loop).
+     - If `State.isFailingOver` and same session → set `State.iterationError = sc` (signal for the running loop).
+     - If `State.isFailingOver` but different session → silently drop.
      - Otherwise → set `State.sessionID` / `State.lastError`, log fail, call `#failover()`.
-- **`chat.message`** — Clears per-turn state (`sessionID`, `lastError`, `isExhausted`). Captures `State.originalModel` on first message. If a `failoverModel` is set, overrides `output.message.model` when the message still references the original model. Detects user-initiated model change and resets failover.
+- **`chat.message`** — Clears per-turn state (`sessionID`, `lastError`, `iterationError`, `isExhausted`). Captures `State.originalModel` (incl. variant) on first message. If a `failoverModel` is set, overrides `output.message.model` when the message still references the original model (provider + model + variant match). Detects user-initiated model change and resets failover.
 - **`dispose`** — Resets all `State` fields.
 
 ## Global state
@@ -37,7 +38,7 @@ The whole plugin is one class with five private helpers and three public hooks:
 State = {
     config         : object|null,   // { enabled, models, logLevel }
     sessionID      : string|null,   // session currently being failed over
-    originalModel  : object|null,   // { providerID, modelID } first model seen
+    originalModel  : object|null,   // { providerID, modelID, variant? } first model seen
     failoverModel  : object|null,   // { providerID, modelID, variant? } last working model
     lastError      : object|null,   // { name, statusCode, message }
     isFailingOver  : boolean,       // re-entrancy guard for #failover()
@@ -55,16 +56,19 @@ passed to `#failover()`.
 async #failover() {
     if (State.isFailingOver) return;
     if (!State.config?.models?.length) return;
+    if (!State.sessionID) return;
     State.isFailingOver = true;
     try {
         for (let i = 0; i < State.config.models.length; i++) {
+            if (!State.sessionID) return;   // aborted by reset()
             const entry  = State.config.models[i];
             const model  = this.#modelFromEntry(entry);
             const label  = this.#labelFromEntry(entry);
             State.iterationError = null;
             this.#log(INFO, `Trying ${i}: ${label}`);
+            let result;
             try {
-                await this.#client.session.prompt({
+                result = await this.#client.session.prompt({
                     path: { id: State.sessionID },
                     body: {
                         model,
@@ -78,6 +82,10 @@ async #failover() {
                 State.iterationError = err?.statusCode ?? "throw";
                 this.#log(DEBUG, `prompt() threw for ${label}: ${err?.message ?? err}`);
             }
+            if (!State.iterationError && result?.data?.info?.error)
+                State.iterationError = result.data.info.error.statusCode ?? "error";
+            if (!State.iterationError && result?.data?.info?.state == "rejected")
+                State.iterationError = "rejected";
             await new Promise(r => setTimeout(r, 300));   // let session.error drain
             if (State.iterationError) {
                 this.#log(INFO, `Failed ${i}: ${label} — ${State.iterationError}`);
@@ -88,6 +96,7 @@ async #failover() {
             return;
         }
         State.isExhausted = true;
+        State.failoverModel = null;
         this.#log(INFO, "Cascade exhausted");
         await this.#client.session.prompt({
             path: { id: State.sessionID },
@@ -99,13 +108,14 @@ async #failover() {
 }
 ```
 
-## Error-detection model (single mechanism)
+## Error-detection model (dual mechanism)
 
-The only signal of failure is `session.error` events. When one fires during a
-cascade, `onEvent` sets `State.iterationError`. The `#failover()` loop checks
-`State.iterationError` after a 300 ms wait post-`prompt()` (giving the event
-loop time to drain any in-flight `session.error`). The wait is defensive — in
-practice the event arrives inside the `await prompt()` window.
+Two signals feed into the `#failover()` loop:
+
+1. **Synchronous** — `prompt()` result is captured (`const result = await prompt()`). If `result.data.info.error` is present or `result.data.info.state == "rejected"`, the model is considered failed immediately.
+2. **Asynchronous** — `session.error` events during a cascade set `State.iterationError`. The loop checks `State.iterationError` after a 300 ms wait post-`prompt()` (giving the event loop time to drain any in-flight `session.error`). Only errors matching the active cascade's session are accepted.
+
+The dual approach closes the race window where an error could fire between the `await` resolving and the 300 ms deferred check.
 
 ## chat.message override flow (across messages)
 
@@ -129,4 +139,4 @@ practice the event arrives inside the `await prompt()` window.
 - Tabs for indentation, Allman braces, spaces inside parens/brackets, space before semicolons.
 - English-only artifacts.
 - No public properties on the class except the three hooks, no `global`, composition over inheritance.
-- Detection of failures is centralised on `session.error` events — no inspection of `result.data.info.error`, no retry-event polling.
+- Detection of failures uses both synchronous `result.data.info` inspection and asynchronous `session.error` events.
