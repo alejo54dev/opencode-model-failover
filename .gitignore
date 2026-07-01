@@ -8,4 +8,5 @@ dist/
 *.swo
 
 .handoff/
+.backups/
 .prompt.txt

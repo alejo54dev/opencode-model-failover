@@ -24,14 +24,16 @@ The whole plugin is one class with five private helpers and three public hooks:
 
 - **`event`** — Four branches:
   1. `session.deleted` → `reset()`.
-  2. `session.status` with `status.type == "retry"` → capture `sessionID`, reset `idx`, call `#failover()` (skipped if `isBusy`).
-  3. `session.error` with `statusCode ∈ [401, 402, 403, 404]` and not `MessageAbortedError`:
-     - If `isBusy` and same session → set `inCascade = true` (signal for the running failover step).
-     - If `isBusy` but different session → silently drop.
-     - If `failoverModel` set and same session → stale, drop.
-     - If `idx > 0` (mid-cascade, between steps) → set `inCascade = true`, return (signal for the pending recursion).
-     - Otherwise → set `sessionID` / `lastError`, reset `idx`, call `#failover()`.
-- **`chat.message`** — Clears per-turn state (`sessionID`, `lastError`, `idx`, `inCascade`, `isExhausted`). Captures `State.originalModel` (incl. variant) on first message. Detects user-initiated model changes and clears `failoverModel`. When `failoverModel` is set, overrides `output.message.model` if `input.model` matches the original model.
+  2. `session.status` with `status.type == "retry"` → capture `sessionID`, call `#failover()` (skipped if `isBusy` or `failoverModel` set).
+  3. `session.error` with `statusCode ∈ [401, 402, 403, 404, 500]` and not `MessageAbortedError`:
+     - If `isBusy` → silently drop (while-loop captures failures inline).
+     - If `failoverModel` set and same session → stale, drop silently.
+     - Otherwise → set `sessionID` / `lastError`, call `#failover()`.
+- **`chat.message`** — Updates `sessionID` to track current session.
+  Clears per-turn state if no `failoverModel`. Captures `State.originalModel`
+  (incl. variant) on first message. Detects user-initiated model changes and
+  clears `failoverModel`. When `failoverModel` is set, overrides
+  `output.message.model` if `input.model` matches the original model.
 - **`dispose`** — Resets all `State` fields.
 
 ## Global state
@@ -43,17 +45,16 @@ State = {
     originalModel : object|null,   // { providerID, modelID, variant? } user's TUI selection
     failoverModel : object|null,   // { providerID, modelID, variant? } last working model
     lastError     : object|null,   // { name, statusCode, message }
-    idx           : 0,             // chain index, advances per attempt
     isBusy        : false,         // re-entrancy guard for #failover()
-    inCascade     : false,         // continues the chain; set async by session.error or sync by prompt() failure
-    isExhausted   : false          // informational flag
 }
 ```
 
-## `#failover()` — recursive one-step cascade
+## `#failover()` — while-loop cascade
 
-Each call tries exactly one model from the chain. Exhaustion is checked
-at the top before any I/O — guaranteeing it is always reached.
+A single while-loop that aborts the session first (to reset its error state),
+then tries each model. On the first success it sets `failoverModel` and returns.
+When every model returns an error, `failoverModel` is nulled, the session is
+aborted again, and a "❌ Failover chain exhausted." message is sent.
 
 ```js
 async #failover() {
@@ -61,71 +62,47 @@ async #failover() {
     if (!State.config?.models?.length) return;
     if (!State.sessionID) return;
 
-    State.isBusy  = true;
-    State.inCascade = false;
-
+    State.isBusy = true;
     try {
-        if (State.idx >= State.config.models.length) {
-            // EXHAUSTION — checked at top, before any I/O
-            State.isExhausted   = true;
-            State.failoverModel = null;
-            log("Chain models exhausted");
-            await prompt("❌ Failover chain exhausted").catch(() => {});
-            return;
+        // Abort to reset session state after the 4xx
+        await this.#client.session.abort(...).catch(() => {});
+        for (let i = 0; i < models.length; i++) {
+            // prompt(model, ...)
+            // if error → continue to next model
+            // if ok    → set failoverModel, return
         }
-
-        const i = State.idx; State.idx++;
-        const entry = models[i];
-        const model = modelFromEntry(entry);
-        const label = labelFromEntry(entry);
-
-        try {
-            const result = await prompt(model, "✅ Failover to [label]", "Continue.");
-            if (result?.data?.info?.error)    State.inCascade = true;
-            if (result?.data?.info?.state == "rejected") State.inCascade = true;
-        } catch (err) {
-            State.inCascade = true;
-        }
-
-        if (State.inCascade) {
-            log(`Failed ${i}: ${label}`);
-            return;
-        }
-
-        State.failoverModel = model;
-        log(`Override: ${label}`);
+        // Exhausted — null failoverModel, abort, prompt exhausted message
     } finally {
         State.isBusy = false;
-    }
-
-    if (State.inCascade) {
-        State.inCascade = false;
-        await this.#failover();  // recursive advance to next model
     }
 }
 ```
 
-## Error-detection model (dual mechanism)
+## Error detection
 
-Two signals feed into the `#failover()` recursion:
+The while-loop inspects the `prompt()` return value synchronously using a
+single property path:
 
-1. **Synchronous** — `prompt()` throw or `result.data.info.error`/`rejected` → sets `inCascade`
-2. **Asynchronous** — `session.error` events during `isBusy` set `State.inCascade = true`
+```
+info?.error?.data?.message ?? "unknown"
+```
 
-After `isBusy` is released in `finally`, the function checks `State.inCascade` and
-recursively calls itself to try the next model. The `inCascade` flag is captured
-inside the busy lock and processed immediately after.
+Only `info.error.data.message` carries the actual error text; the sibling
+`.name` is generic ("Error") and `.statusCode` is logged separately.
+`result.error` mirrors `info.error` so it adds no value. The one-line chain
+keeps debug logs concise while avoiding dead fallback clutter.
 
-**Mid-cascade guard**: If `session.error` fires between recursive steps (when `isBusy`
-is briefly false), the handler checks `State.idx > 0`. When true it sets `inCascade = true`
-and returns without resetting `idx`, preserving chain progress.
+No async error signaling is needed because the while-loop captures the failure
+inline — `prompt()` either throws or returns a result with `result.error` /
+`info.error`.
 
-Stale errors arriving after the cascade completes (when `failoverModel` is set
-and `isBusy` is false) are silently dropped.
+Stale errors arriving after the cascade completes (when `failoverModel` is set,
+`isBusy` is false, and `sid === State.sessionID`) are silently dropped.
 
-## chat.message override flow (across messages)
+## chat.message override flow
 
-1. Per-turn state cleared (`sessionID`, `lastError`, `idx`, `inCascade`, `isExhausted`).
+1. `sessionID` tracking: if `failoverModel` is set, `sessionID` is updated to
+   `input.sessionID` for correct stale-error detection. Otherwise cleared.
 2. First message ever: `State.originalModel` captured from `input.model`.
 3. Model-change detection (always, independent of failover state):
    - If `input.model` differs from `State.originalModel` → failover cleared,
@@ -148,4 +125,4 @@ and `isBusy` is false) are silently dropped.
 - Tabs for indentation, Allman braces, spaces inside parens/brackets, space before semicolons.
 - English-only artifacts.
 - No public properties on the class except the three hooks, no `global`, composition over inheritance.
-- Detection of failures uses both synchronous `result.data.info` inspection and asynchronous `session.error` events via the busy/cascade flag pattern.
+- The while-loop cascade uses only synchronous result inspection; no async state flags.

@@ -65,6 +65,10 @@ tail -f ~/.config/opencode/model-failover.log
 | Chain exhausted | "❌ Failover chain exhausted" sent to session. |
 | User switches model via `/models` | Respects user's choice; next `session.error` restarts cascade from the beginning. |
 
+## Version
+
+Current: **v2.0.1** — Simplified error extraction to single property path `info?.error?.data?.message ?? "unknown"`.
+
 ## Files
 
 | File | Purpose |
