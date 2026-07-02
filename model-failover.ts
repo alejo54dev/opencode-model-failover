@@ -7,6 +7,18 @@
 *	Install: cp model-failover.ts ~/.config/opencode/plugins/model-failover.ts
 *	Config:  ~/.config/opencode/model-failover.json
 *
+*	Example config:
+*	{
+*		"enabled": true,
+*		"models":
+*		[
+*			{ "model": "opencode-go/deepseek-v4-flash", "variant": "max" },
+*			{ "model": "opencode-go/deepseek-v4-pro", "variant": "medium" },
+*			{ "model": "deepseek/deepseek-v4-flash-free", "variant": "max" }
+*		],
+*		"logLevel": "info"
+*	}
+*
 *	@name model-failover
 *	@version 2.0.6
 *	@author Alejandro Carraretto
