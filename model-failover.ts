@@ -1,62 +1,121 @@
 /**
-*	model-failover.js
+*	model-failover.ts
 *
 *	OpenCode plugin — intercepts permanent HTTP 4xx/500 errors and fails
 *	over through a configured chain of models.
 *
-*	Install: cp model-failover.js ~/.config/opencode/plugins/model-failover.js
+*	Install: cp model-failover.ts ~/.config/opencode/plugins/model-failover.ts
 *	Config:  ~/.config/opencode/model-failover.json
 *
 *	@name model-failover
-*	@version 2.0.5
+*	@version 2.0.6
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
 */
 
+import type { Plugin, PluginInput } from "@opencode-ai/plugin" ;
 import { appendFileSync, existsSync, readFileSync } from "node:fs" ;
 import { homedir } from "node:os" ;
 import { join } from "node:path" ;
 
-// ---------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------
+// ─── Paths ─────────────────────────────────────────────────────────────────
 
 const CONFIG_DIR  = join( homedir(), ".config", "opencode" ) ;
 const CONFIG_FILE = join( CONFIG_DIR, "model-failover.json" ) ;
 const LOG_FILE    = join( CONFIG_DIR, "model-failover.log" ) ;
 
-const LOG_LEVEL =
+// ─── Types ─────────────────────────────────────────────────────────────────
+
+type LogLevelName = "error" | "info" | "debug" ;
+
+interface ModelEntry
+{
+	model : string ;
+	variant? : string ;
+}
+
+interface ParsedModel
+{
+	providerID : string ;
+	modelID    : string ;
+	variant?   : string ;
+}
+
+interface Config
+{
+	enabled  : boolean ;
+	models   : ModelEntry[ ] ;
+	logLevel : LogLevelName ;
+}
+
+interface State
+{
+	config        : Config | null ;
+	sessionID     : string | null ;
+	originalModel : ParsedModel | null ;
+	failoverModel : ParsedModel | null ;
+	isBusy        : boolean ;
+}
+
+interface SessionError
+{
+	name? : string ;
+	message? : string ;
+	data? : { statusCode? : number ; message? : string } ;
+}
+
+interface SessionEvent
+{
+	type : "session.deleted" | "session.status" | "session.error" | string ;
+	properties? :
+	{
+		sessionID? : string ;
+		status? : { type : string } ;
+		error? : SessionError ;
+	} ;
+}
+
+interface ChatInput
+{
+	sessionID? : string ;
+	model? : ParsedModel ;
+}
+
+interface ChatOutput
+{
+	message? : { model? : ParsedModel } ;
+}
+
+// ─── Constants ─────────────────────────────────────────────────────────────
+
+const LOG_LEVEL : Record< LogLevelName, number > =
 {
 	ERROR : 0,
 	INFO  : 1,
-	DEBUG : 2
+	DEBUG : 2,
 } ;
 
-// ---------------------------------------------------------------
-// STATE — minimal
-// ---------------------------------------------------------------
+// ─── State ─────────────────────────────────────────────────────────────────
 
-const STATE =
+const STATE : State =
 {
-	config        : null,   // { enabled, models, logLevel }
-	sessionID     : null,   // session being failed over
-	originalModel : null,   // { providerID, modelID, variant? }
-	failoverModel : null,   // { providerID, modelID, variant? }
-	isBusy        : false,  // re-entrancy guard
+	config        : null,
+	sessionID     : null,
+	originalModel : null,
+	failoverModel : null,
+	isBusy        : false,
 } ;
 
-// ---------------------------------------------------------------
-// Logger
-// ---------------------------------------------------------------
+// ─── Logger ────────────────────────────────────────────────────────────────
 
-function log( level, message )
+function log( level : number, message : string ) : void
 {
-	const min = LOG_LEVEL[ STATE.config?.logLevel?.toUpperCase?.() ] ?? 1 ;
+	const min = LOG_LEVEL[ STATE.config?.logLevel ?? "info" ] ?? 1 ;
 
 	if ( level > min ) return ;
 
-	const label = Object.keys( LOG_LEVEL )[ level ] ;
+	const label = ( Object.keys( LOG_LEVEL ) as LogLevelName[ ] )[ level ] ;
 
 	try
 	{
@@ -65,11 +124,9 @@ function log( level, message )
 	catch {}
 }
 
-// ---------------------------------------------------------------
-// Config
-// ---------------------------------------------------------------
+// ─── Config ────────────────────────────────────────────────────────────────
 
-function loadConfig()
+function loadConfig() : void
 {
 	if ( ! existsSync( CONFIG_FILE ) )
 	{
@@ -79,33 +136,36 @@ function loadConfig()
 
 	try
 	{
-		const raw = JSON.parse( readFileSync( CONFIG_FILE, "utf-8" ) ) ;
+		const raw = JSON.parse( readFileSync( CONFIG_FILE, "utf-8" ) ) as
+		{
+			enabled? : boolean ;
+			models?  : ModelEntry[ ] ;
+			logLevel?: string ;
+		} ;
 
 		const models = Array.isArray( raw.models )
 			? raw.models.filter( ( e ) => typeof e?.model == "string" && e.model != "" )
 			: [ ] ;
 
+		const lvl = ( raw.logLevel?.toLowerCase?.() ?? "" ) as LogLevelName ;
+
 		STATE.config = {
 			enabled  : typeof raw.enabled == "boolean" ? raw.enabled : true,
 			models,
-			logLevel : [ "error", "info", "debug" ].includes( raw.logLevel?.toLowerCase() ?? "" )
-				? raw.logLevel
-				: "info"
+			logLevel : ( [ "error", "info", "debug" ] as LogLevelName[ ] ).includes( lvl ) ? lvl : "info",
 		} ;
 
 		log( LOG_LEVEL.INFO, `Loaded: ${ models.length } models, enabled: ${ STATE.config.enabled }` ) ;
 	}
 	catch ( err )
 	{
-		log( LOG_LEVEL.ERROR, `Config parse error: ${ err.message }` ) ;
+		log( LOG_LEVEL.ERROR, `Config parse error: ${ ( err as Error ).message }` ) ;
 	}
 }
 
-// ---------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------
+// ─── Helpers ───────────────────────────────────────────────────────────────
 
-function parseEntry( entry )
+function parseEntry( entry : ModelEntry ) : ParsedModel | null
 {
 	const slash = entry.model.indexOf( "/" ) ;
 
@@ -114,15 +174,13 @@ function parseEntry( entry )
 	return {
 		providerID : entry.model.substring( 0, slash ),
 		modelID    : entry.model.substring( slash + 1 ),
-		variant    : entry.variant
+		variant    : entry.variant,
 	} ;
 }
 
-// ---------------------------------------------------------------
-// Failover — simple for loop, no recursion
-// ---------------------------------------------------------------
+// ─── Failover ──────────────────────────────────────────────────────────────
 
-async function failover( sessionID, client )
+async function failover( sessionID : string, client : PluginInput[ "client" ] ) : Promise< void >
 {
 	if ( STATE.isBusy ) return ;
 	if ( ! STATE.config?.models?.length ) return ;
@@ -158,9 +216,9 @@ async function failover( sessionID, client )
 						model,
 						parts : [
 							{ type : "text", text : `✅ Failover to [${ label }]`, ignored : true },
-							{ type : "text", text : "Continue." }
-						]
-					}
+							{ type : "text", text : "Continue." },
+						],
+					},
 				} ) ;
 
 				const info  = result?.data?.info ;
@@ -181,23 +239,21 @@ async function failover( sessionID, client )
 				if ( errMsg || ( state && state != "ok" ) )
 				{
 					log( LOG_LEVEL.DEBUG,
-						`Response error for ${ label }: ${ errMsg || state || "unknown" }`
+						`Response error for ${ label }: ${ errMsg || state || "unknown" }`,
 					) ;
 					continue ;
 				}
 
 				log( LOG_LEVEL.INFO, `Override: ${ label }` ) ;
 				STATE.failoverModel = model ;
-
 				return ;
 			}
 			catch ( err )
 			{
-				log( LOG_LEVEL.DEBUG, `Prompt threw for ${ label }: ${ err?.message ?? String( err ) }` ) ;
+				log( LOG_LEVEL.DEBUG, `Prompt threw for ${ label }: ${ ( err as Error )?.message ?? String( err ) }` ) ;
 			}
 		}
 
-		// Exhausted
 		STATE.failoverModel = null ;
 		log( LOG_LEVEL.INFO, "Chain models exhausted" ) ;
 
@@ -207,12 +263,12 @@ async function failover( sessionID, client )
 			path : { id : sessionID },
 			body : {
 				parts : [
-					{ type : "text", text : "❌ Failover chain exhausted." }
-				]
-			}
+					{ type : "text", text : "❌ Failover chain exhausted." },
+				],
+			},
 		} ).catch( ( err ) =>
 		{
-			log( LOG_LEVEL.DEBUG, `Exhausted prompt error for ${ sessionID }: ${ err?.message ?? "unknown" }` ) ;
+			log( LOG_LEVEL.DEBUG, `Exhausted prompt error for ${ sessionID }: ${ ( err as Error )?.message ?? "unknown" }` ) ;
 		} ) ;
 	}
 	finally
@@ -221,11 +277,9 @@ async function failover( sessionID, client )
 	}
 }
 
-// ---------------------------------------------------------------
-// Hooks
-// ---------------------------------------------------------------
+// ─── Hooks ─────────────────────────────────────────────────────────────────
 
-async function onEvent( { event }, client )
+async function onEvent( { event } : { event : SessionEvent }, client : PluginInput[ "client" ] ) : Promise< void >
 {
 	if ( event.type == "session.deleted" )
 	{
@@ -268,13 +322,13 @@ async function onEvent( { event }, client )
 	STATE.sessionID = sid ;
 
 	log( LOG_LEVEL.ERROR,
-		`Fail: ${ STATE.originalModel?.providerID ?? "?" }/${ STATE.originalModel?.modelID ?? "?" } — ${ sc }`
+		`Fail: ${ STATE.originalModel?.providerID ?? "?" }/${ STATE.originalModel?.modelID ?? "?" } — ${ sc }`,
 	) ;
 
 	await failover( sid, client ) ;
 }
 
-function onChatMessage( input, output )
+function onChatMessage( input : ChatInput, output : ChatOutput ) : void
 {
 	if ( ! input.sessionID ) return ;
 	if ( STATE.isBusy ) return ;
@@ -290,7 +344,7 @@ function onChatMessage( input, output )
 		STATE.originalModel = {
 			providerID : sel.providerID,
 			modelID    : sel.modelID,
-			variant    : sel.variant
+			variant    : sel.variant,
 		} ;
 
 		log( LOG_LEVEL.INFO, `Current model: ${ STATE.originalModel.providerID }/${ STATE.originalModel.modelID }` ) ;
@@ -304,7 +358,7 @@ function onChatMessage( input, output )
 		STATE.originalModel = {
 			providerID : sel.providerID,
 			modelID    : sel.modelID,
-			variant    : sel.variant
+			variant    : sel.variant,
 		} ;
 
 		log( LOG_LEVEL.INFO, `Model changed: ${ STATE.originalModel.providerID }/${ STATE.originalModel.modelID }` ) ;
@@ -316,7 +370,7 @@ function onChatMessage( input, output )
 	output.message.model = { ...STATE.failoverModel } ;
 }
 
-function reset()
+function reset() : void
 {
 	STATE.sessionID     = null ;
 	STATE.originalModel = null ;
@@ -324,19 +378,17 @@ function reset()
 	STATE.isBusy        = false ;
 }
 
-// ---------------------------------------------------------------
-// Entry point
-// ---------------------------------------------------------------
+// ─── Plugin ────────────────────────────────────────────────────────────────
 
-export default async function plugin( { client } )
+export default ( async ( { client } : PluginInput ) =>
 {
 	loadConfig() ;
 
 	if ( ! STATE.config?.enabled ) return { } ;
 
 	return {
-		event          : ( e ) => onEvent( e, client ),
+		event          : ( e : { event : SessionEvent } ) => onEvent( e, client ),
 		"chat.message" : onChatMessage,
-		dispose        : reset
+		dispose        : reset,
 	} ;
-}
+} ) satisfies Plugin ;

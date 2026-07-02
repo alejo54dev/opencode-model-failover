@@ -9,15 +9,15 @@ When the active model fails with a session.error the plugin immediately aborts t
 ## Install
 
 ```bash
-cp model-failover.js ~/.config/opencode/plugins/model-failover.js
+cp model-failover.ts ~/.config/opencode/plugins/model-failover.ts
 ```
 
-No npm, no build step, no dependencies.
+No npm, no build step, no dependencies. OpenCode runs TypeScript natively.
 
 ## Disable
 
 ```bash
-mv ~/.config/opencode/plugins/model-failover.js{,.disabled}
+mv ~/.config/opencode/plugins/model-failover.ts{,.disabled}
 ```
 
 Or set `"enabled": false` in the config.
@@ -66,13 +66,13 @@ tail -f ~/.config/opencode/model-failover.log
 
 ## Version
 
-Current: **v2.0.5** — Failover on any session.error (except MessageAbortedError), removed FAIL_CODES filter.
+Current: **v2.0.6** — Ported to TypeScript, zero behavior changes. Failover on any session.error (except MessageAbortedError), removed FAIL_CODES filter.
 
 ## Files
 
 | File | Purpose |
 |---|---|
-| `model-failover.js` | The plugin. Single ESM file, zero dependencies. |
+| `model-failover.ts` | The plugin. Single TypeScript file, zero dependencies. |
 | `README.md` | This file. |
 | `AGENTS.md` | AI agent context. |
 
