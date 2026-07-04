@@ -63,61 +63,6 @@ const CONFIG =
 	logLevel : "info" as "silent" | "error" | "info" | "debug",
 };
 
-// ─── Config ────────────────────────────────────────────────────────────────
-
-function loadConfig()
-{
-	let file : Record<string, unknown> = {};
-
-	try
-	{
-		file = JSON.parse( readFileSync( CONFIG_FILE, "utf-8" ) );
-	}
-	catch
-	{
-		log( LOG_LEVEL.ERROR, `Config not found or parse error at ${ CONFIG_FILE }` ) ;
-		return ;
-	}
-
-	const models = Array.isArray( file.models )
-		? file.models.filter( ( e : any ) => typeof e?.model == "string" && e.model != "" )
-		: [] ;
-
-	const level = ( file.logLevel ?? "" ).toLowerCase() ;
-
-	const opts =
-	{
-		enabled  : typeof file.enabled == "boolean" ? file.enabled : true,
-		models   : models,
-		logLevel : level in LOG_LEVEL ? level : "info",
-	} as typeof CONFIG;
-
-	CONFIG.logLevel = opts.logLevel ;
-	STATE.config    = opts ;
-
-	log( LOG_LEVEL.INFO, "Config loaded" ) ;
-	log( LOG_LEVEL.INFO, `Loaded: ${ models.length } models, enabled: ${ opts.enabled }` ) ;
-
-	return opts ;
-}
-
-// ─── Logger ────────────────────────────────────────────────────────────────
-
-function log( level : number, message : string ) : void
-{
-	const min = LOG_LEVEL[ ( CONFIG.logLevel ?? "info" ).toUpperCase() ] ?? LOG_LEVEL.ERROR ;
-
-	if ( level > min ) return ;
-
-	const label = Object.keys( LOG_LEVEL )[ level ] ?? "" ;
-
-	try
-	{
-		appendFileSync( LOG_FILE, `[${ new Date().toISOString() }] [${ label }]: ${ message }\n` ) ;
-	}
-	catch {}
-}
-
 // ─── Interfaces ────────────────────────────────────────────────────────────
 
 interface ModelEntry
@@ -176,6 +121,61 @@ interface ChatInput
 interface ChatOutput
 {
 	message? : { model? : ParsedModel } ;
+}
+
+// ─── Config ────────────────────────────────────────────────────────────────
+
+function loadConfig()
+{
+	let file : Record<string, unknown> = {};
+
+	try
+	{
+		file = JSON.parse( readFileSync( CONFIG_FILE, "utf-8" ) );
+	}
+	catch
+	{
+		log( LOG_LEVEL.ERROR, `Config not found or parse error at ${ CONFIG_FILE }` ) ;
+		return ;
+	}
+
+	const models = Array.isArray( file.models )
+		? file.models.filter( ( e : any ) => typeof e?.model == "string" && e.model != "" )
+		: [] ;
+
+	const level = ( file.logLevel ?? "" ).toLowerCase() ;
+
+	const opts =
+	{
+		enabled  : typeof file.enabled == "boolean" ? file.enabled : true,
+		models   : models,
+		logLevel : level in LOG_LEVEL ? level : "info",
+	} as typeof CONFIG;
+
+	CONFIG.logLevel = opts.logLevel ;
+	STATE.config    = opts ;
+
+	log( LOG_LEVEL.INFO, "Config loaded" ) ;
+	log( LOG_LEVEL.INFO, `Loaded: ${ models.length } models, enabled: ${ opts.enabled }` ) ;
+
+	return opts ;
+}
+
+// ─── Logger ────────────────────────────────────────────────────────────────
+
+function log( level : number, message : string ) : void
+{
+	const min = LOG_LEVEL[ ( CONFIG.logLevel ?? "info" ).toUpperCase() ] ?? LOG_LEVEL.ERROR ;
+
+	if ( level > min ) return ;
+
+	const label = Object.keys( LOG_LEVEL )[ level ] ?? "" ;
+
+	try
+	{
+		appendFileSync( LOG_FILE, `[${ new Date().toISOString() }] [${ label }]: ${ message }\n` ) ;
+	}
+	catch {}
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
