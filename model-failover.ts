@@ -1,7 +1,7 @@
 /**
 *	model-failover.ts
 *
-*	OpenCode plugin — intercepts permanent HTTP 4xx/500 errors and fails
+*	OpenCode plugin — Intercepts OpenCode model provider errors and fails
 *	over through a configured chain of models.
 *
 *	Install: cp model-failover.ts ~/.config/opencode/plugins/model-failover.ts
