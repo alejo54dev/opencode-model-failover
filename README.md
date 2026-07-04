@@ -43,7 +43,7 @@ Or set `"enabled": false` in the config.
 |---|---|---|---|
 | `enabled` | `boolean` | `true` | Master switch. |
 | `models` | `object[]` | `[]` | Ordered model entries `{ model, variant? }` where `model` is `"providerID/modelID"`. Variant can be `max`, `high`, `medium`, `low`, etc. |
-| `logLevel` | `string` | `"info"` | `"error"`, `"info"`, or `"debug"`. |
+| `logLevel` | `string` | `"info"` | `"silent"`, `"error"`, `"info"`, or `"debug"`. |
 
 ## Logs
 
@@ -66,7 +66,7 @@ tail -f ~/.config/opencode/model-failover.log
 
 ## Version
 
-Current: **v2.0.6** — Ported to TypeScript, zero behavior changes. Failover on any session.error (except MessageAbortedError), removed FAIL_CODES filter.
+Current: **v1.0.27** — Refactored log levels: added silent (0) mode, LOG_LEVEL as single source of truth, removed LogLevelName type.
 
 ## Files
 

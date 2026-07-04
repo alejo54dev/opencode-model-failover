@@ -20,7 +20,7 @@
 *	}
 *
 *	@name model-failover
-*	@version 2.0.6
+*	@version 1.0.27
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -39,8 +39,6 @@ const LOG_FILE    = join( CONFIG_DIR, "model-failover.log" ) ;
 
 // ─── Types ─────────────────────────────────────────────────────────────────
 
-type LogLevelName = "error" | "info" | "debug" ;
-
 interface ModelEntry
 {
 	model : string ;
@@ -58,7 +56,7 @@ interface Config
 {
 	enabled  : boolean ;
 	models   : ModelEntry[ ] ;
-	logLevel : LogLevelName ;
+	logLevel : string ;
 }
 
 interface State
@@ -101,14 +99,13 @@ interface ChatOutput
 
 // ─── Constants ─────────────────────────────────────────────────────────────
 
-const LOG_LEVEL : Record< LogLevelName, number > =
+const LOG_LEVEL =
 {
-	ERROR : 0,
-	INFO  : 1,
-	DEBUG : 2,
-} ;
-
-// ─── State ─────────────────────────────────────────────────────────────────
+	SILENT : 0,
+	ERROR  : 1,
+	INFO   : 2,
+	DEBUG  : 3,
+} as const ;
 
 const STATE : State =
 {
@@ -123,11 +120,11 @@ const STATE : State =
 
 function log( level : number, message : string ) : void
 {
-	const min = LOG_LEVEL[ STATE.config?.logLevel ?? "info" ] ?? 1 ;
+	const min = LOG_LEVEL[ ( STATE.config?.logLevel ?? "info" ).toUpperCase() ] ?? LOG_LEVEL.ERROR ;
 
 	if ( level > min ) return ;
 
-	const label = ( Object.keys( LOG_LEVEL ) as LogLevelName[ ] )[ level ] ;
+	const label = Object.keys( LOG_LEVEL )[ level ] ?? "" ;
 
 	try
 	{
@@ -159,12 +156,12 @@ function loadConfig() : void
 			? raw.models.filter( ( e ) => typeof e?.model == "string" && e.model != "" )
 			: [ ] ;
 
-		const lvl = ( raw.logLevel?.toLowerCase?.() ?? "" ) as LogLevelName ;
+		const level = raw.logLevel?.toLowerCase?.() ?? "" ;
 
-		STATE.config = {
+		STATE.config = { // defaults
 			enabled  : typeof raw.enabled == "boolean" ? raw.enabled : true,
 			models,
-			logLevel : ( [ "error", "info", "debug" ] as LogLevelName[ ] ).includes( lvl ) ? lvl : "info",
+			logLevel : level.toUpperCase() in LOG_LEVEL ? level : "info",
 		} ;
 
 		log( LOG_LEVEL.INFO, `Loaded: ${ models.length } models, enabled: ${ STATE.config.enabled }` ) ;
