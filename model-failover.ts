@@ -16,7 +16,7 @@
 *			{ "model": "opencode-go/deepseek-v4-pro", "variant": "medium" },
 *			{ "model": "deepseek/deepseek-v4-flash-free", "variant": "max" }
 *		],
-*		"logLevel": "info"
+*		"logLevel": "info"     // "silent" | "error" | "info" | "debug"
 *	}
 *
 *	@name model-failover
@@ -37,7 +37,81 @@ const CONFIG_DIR  = join( homedir(), ".config", "opencode" ) ;
 const CONFIG_FILE = join( CONFIG_DIR, "model-failover.json" ) ;
 const LOG_FILE    = join( CONFIG_DIR, "model-failover.log" ) ;
 
-// ─── Types ─────────────────────────────────────────────────────────────────
+// ─── Defaults & Config ─────────────────────────────────────────────────────
+
+const CONFIG =
+{
+	enabled  : true,
+	models   : [] as ModelEntry[],
+	logLevel : "info" as "silent" | "error" | "info" | "debug",
+};
+
+function loadConfig()
+{
+	const file = existsSync( CONFIG_FILE )
+		? ( () =>
+		{
+			try { return JSON.parse( readFileSync( CONFIG_FILE, "utf-8" ) ); }
+			catch { return {}; }
+		} )()
+		: {};
+
+	const models = Array.isArray( file.models )
+		? file.models.filter( ( e : any ) => typeof e?.model == "string" && e.model != "" )
+		: [] ;
+
+	const level = ( file.logLevel ?? "" ).toLowerCase() ;
+
+	const opts =
+	{
+		enabled  : typeof file.enabled == "boolean" ? file.enabled : true,
+		models   : models,
+		logLevel : level in LOG_LEVEL ? level : "info",
+	} as typeof CONFIG;
+
+	CONFIG.logLevel = opts.logLevel ;
+	STATE.config    = opts ;
+
+	return opts ;
+}
+
+// ─── Constants ─────────────────────────────────────────────────────────────
+
+const LOG_LEVEL =
+{
+	SILENT : 0,
+	ERROR  : 1,
+	INFO   : 2,
+	DEBUG  : 3,
+} as const ;
+
+const STATE : State =
+{
+	config        : null,
+	sessionID     : null,
+	originalModel : null,
+	failoverModel : null,
+	isBusy        : false,
+} ;
+
+// ─── Logger ────────────────────────────────────────────────────────────────
+
+function log( level : number, message : string ) : void
+{
+	const min = LOG_LEVEL[ ( CONFIG.logLevel ?? "info" ).toUpperCase() ] ?? LOG_LEVEL.ERROR ;
+
+	if ( level > min ) return ;
+
+	const label = Object.keys( LOG_LEVEL )[ level ] ?? "" ;
+
+	try
+	{
+		appendFileSync( LOG_FILE, `[${ new Date().toISOString() }] [${ label }]: ${ message }\n` ) ;
+	}
+	catch {}
+}
+
+// ─── Interfaces ────────────────────────────────────────────────────────────
 
 interface ModelEntry
 {
@@ -95,81 +169,6 @@ interface ChatInput
 interface ChatOutput
 {
 	message? : { model? : ParsedModel } ;
-}
-
-// ─── Constants ─────────────────────────────────────────────────────────────
-
-const LOG_LEVEL =
-{
-	SILENT : 0,
-	ERROR  : 1,
-	INFO   : 2,
-	DEBUG  : 3,
-} as const ;
-
-const STATE : State =
-{
-	config        : null,
-	sessionID     : null,
-	originalModel : null,
-	failoverModel : null,
-	isBusy        : false,
-} ;
-
-// ─── Logger ────────────────────────────────────────────────────────────────
-
-function log( level : number, message : string ) : void
-{
-	const min = LOG_LEVEL[ ( STATE.config?.logLevel ?? "info" ).toUpperCase() ] ?? LOG_LEVEL.ERROR ;
-
-	if ( level > min ) return ;
-
-	const label = Object.keys( LOG_LEVEL )[ level ] ?? "" ;
-
-	try
-	{
-		appendFileSync( LOG_FILE, `[${ new Date().toISOString() }] [${ label }]: ${ message }\n` ) ;
-	}
-	catch {}
-}
-
-// ─── Config ────────────────────────────────────────────────────────────────
-
-function loadConfig() : void
-{
-	if ( ! existsSync( CONFIG_FILE ) )
-	{
-		log( LOG_LEVEL.ERROR, `Config not found at ${ CONFIG_FILE }` ) ;
-		return ;
-	}
-
-	try
-	{
-		const raw = JSON.parse( readFileSync( CONFIG_FILE, "utf-8" ) ) as
-		{
-			enabled? : boolean ;
-			models?  : ModelEntry[ ] ;
-			logLevel?: string ;
-		} ;
-
-		const models = Array.isArray( raw.models )
-			? raw.models.filter( ( e ) => typeof e?.model == "string" && e.model != "" )
-			: [ ] ;
-
-		const level = raw.logLevel?.toLowerCase?.() ?? "" ;
-
-		STATE.config = { // defaults
-			enabled  : typeof raw.enabled == "boolean" ? raw.enabled : true,
-			models,
-			logLevel : level.toUpperCase() in LOG_LEVEL ? level : "info",
-		} ;
-
-		log( LOG_LEVEL.INFO, `Loaded: ${ models.length } models, enabled: ${ STATE.config.enabled }` ) ;
-	}
-	catch ( err )
-	{
-		log( LOG_LEVEL.ERROR, `Config parse error: ${ ( err as Error ).message }` ) ;
-	}
 }
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
