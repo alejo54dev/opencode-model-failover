@@ -10,23 +10,18 @@
 
 ## 🔄 How it works
 
-```
-                     session.error / retry
-                              │
-                              ▼
-┌─────────────────────────────────────────────┐
-│           Abort session                     │
-└─────────────────────┬───────────────────────┘
-                      │
-                      ▼
-┌─────────────────────────────────────────────┐
-│      Try model from chain (loop)            │
-├──────────────────┬──────────────────────────┤
-│   ✅ Success     │      ❌ Failure          │
-├──────────────────┼──────────────────────────┤
-│   Override model │   Next in chain          │
-│   "Continue."    │   or exhausted msg       │
-└──────────────────┴──────────────────────────┘
+```mermaid
+flowchart TD
+    A["⚠️ session.error / retry"] --> B["🛑 Abort session"]
+    B --> C{"🔄 Try model<br/>from chain"}
+    C -->|✅ Success| D["✏️ Override model<br/>Continue."]
+    C -->|❌ Failure| E["⬆️ Next in chain<br/>or ❌ exhausted"]
+
+    style A fill:#1a1a2e,stroke:#e94560,color:#fff
+    style B fill:#16213e,stroke:#0f3460,color:#fff
+    style C fill:#16213e,stroke:#e94560,color:#fff
+    style D fill:#0f3460,stroke:#53a8b6,color:#fff
+    style E fill:#0f3460,stroke:#53a8b6,color:#fff
 ```
 
 ## 💡 What it does
