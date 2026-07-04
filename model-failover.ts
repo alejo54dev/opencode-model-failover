@@ -27,7 +27,7 @@
 */
 
 import type { Plugin, PluginInput } from "@opencode-ai/plugin" ;
-import { appendFileSync, existsSync, readFileSync } from "node:fs" ;
+import { appendFileSync, readFileSync } from "node:fs" ;
 import { homedir } from "node:os" ;
 import { join } from "node:path" ;
 
@@ -48,13 +48,17 @@ const CONFIG =
 
 function loadConfig()
 {
-	const file = existsSync( CONFIG_FILE )
-		? ( () =>
-		{
-			try { return JSON.parse( readFileSync( CONFIG_FILE, "utf-8" ) ); }
-			catch { return {}; }
-		} )()
-		: {};
+	let file : Record<string, unknown> = {};
+
+	try
+	{
+		file = JSON.parse( readFileSync( CONFIG_FILE, "utf-8" ) );
+	}
+	catch
+	{
+		log( LOG_LEVEL.ERROR, `Config not found or parse error at ${ CONFIG_FILE }` ) ;
+		return ;
+	}
 
 	const models = Array.isArray( file.models )
 		? file.models.filter( ( e : any ) => typeof e?.model == "string" && e.model != "" )
@@ -71,6 +75,9 @@ function loadConfig()
 
 	CONFIG.logLevel = opts.logLevel ;
 	STATE.config    = opts ;
+
+	log( LOG_LEVEL.INFO, "Config loaded" ) ;
+	log( LOG_LEVEL.INFO, `Loaded: ${ models.length } models, enabled: ${ opts.enabled }` ) ;
 
 	return opts ;
 }
