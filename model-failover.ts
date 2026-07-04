@@ -125,6 +125,7 @@ interface ChatOutput
 
 // ─── Config ────────────────────────────────────────────────────────────────
 
+// Load config from ~/.config/opencode/model-failover.json, fall back to defaults
 function loadConfig()
 {
 	let file : Record<string, unknown> = {};
@@ -163,6 +164,7 @@ function loadConfig()
 
 // ─── Logger ────────────────────────────────────────────────────────────────
 
+// Append timestamped entry to ~/.config/opencode/model-failover.log
 function log( level : number, message : string ) : void
 {
 	const min = LOG_LEVEL[ ( CONFIG.logLevel ?? "info" ).toUpperCase() ] ?? LOG_LEVEL.ERROR ;
@@ -180,6 +182,7 @@ function log( level : number, message : string ) : void
 
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
+// Parse a "provider/model" string into providerID + modelID + optional variant
 function parseEntry( entry : ModelEntry ) : ParsedModel | null
 {
 	const slash = entry.model.indexOf( "/" ) ;
@@ -195,6 +198,7 @@ function parseEntry( entry : ModelEntry ) : ParsedModel | null
 
 // ─── Failover ──────────────────────────────────────────────────────────────
 
+// Iterate the model chain, abort retry loop, try each model in sequence until one responds OK
 async function failover( sessionID : string, client : PluginInput[ "client" ] ) : Promise< void >
 {
 	if ( STATE.isBusy ) return ;
@@ -294,6 +298,7 @@ async function failover( sessionID : string, client : PluginInput[ "client" ] ) 
 
 // ─── Hooks ─────────────────────────────────────────────────────────────────
 
+// Handle session events: session.deleted → reset, session.status (retry) → failover, session.error → failover
 async function onEvent( { event } : { event : SessionEvent }, client : PluginInput[ "client" ] ) : Promise< void >
 {
 	if ( event.type == "session.deleted" )
@@ -343,6 +348,7 @@ async function onEvent( { event } : { event : SessionEvent }, client : PluginInp
 	await failover( sid, client ) ;
 }
 
+// Intercept chat.message to track original model and inject failover model override
 function onChatMessage( input : ChatInput, output : ChatOutput ) : void
 {
 	if ( ! input.sessionID ) return ;
@@ -385,6 +391,7 @@ function onChatMessage( input : ChatInput, output : ChatOutput ) : void
 	output.message.model = { ...STATE.failoverModel } ;
 }
 
+// Reset all session state: sessionID, original/failover model, busy flag
 function reset() : void
 {
 	STATE.sessionID     = null ;
@@ -402,8 +409,11 @@ export default ( async ( { client } : PluginInput ) =>
 	if ( ! STATE.config?.enabled ) return { } ;
 
 	return {
+		// Hook: intercept session events for failover logic
 		event          : ( e : { event : SessionEvent } ) => onEvent( e, client ),
+		// Hook: intercept messages to inject failover model
 		"chat.message" : onChatMessage,
+		// Cleanup: reset all state
 		dispose        : reset,
 	} ;
 } ) satisfies Plugin ;
