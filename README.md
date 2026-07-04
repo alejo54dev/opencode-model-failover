@@ -1,12 +1,39 @@
-# opencode-model-failover
+# Model Failover (never don't stop)
 
-Automatic model failover plugin for [OpenCode](https://opencode.ai). Detects any session.error (except MessageAbortedError) and switches the active session to the next model in a configured chain — transparently and unattended.
+![Version](https://img.shields.io/badge/version-1.0.32-blue)
+![License](https://img.shields.io/badge/license-MIT-green)
+![OpenCode](https://img.shields.io/badge/OpenCode-plugin-purple)
 
-## What it does
+> Automatic model failover plugin for **OpenCode**. Detects any `session.error`
+> (except `MessageAbortedError`) and switches the active session to the next model
+> in a configured chain — transparently and unattended.
+
+## 🔄 How it works
+
+```
+                     session.error / retry
+                              │
+                              ▼
+┌─────────────────────────────────────────────┐
+│           Abort session                     │
+└─────────────────────┬───────────────────────┘
+                      │
+                      ▼
+┌─────────────────────────────────────────────┐
+│      Try model from chain (loop)            │
+├──────────────────┬──────────────────────────┤
+│   ✅ Success     │      ❌ Failure          │
+├──────────────────┼──────────────────────────┤
+│   Override model │   Next in chain          │
+│   "Continue."    │   or exhausted msg       │
+└──────────────────┴──────────────────────────┘
+```
+
+## 💡 What it does
 
 When the active model fails with a session.error the plugin immediately aborts the session, picks the next model in the chain, and sends a "Continue." re-prompt so the new model picks up the task using the existing conversation context. Notifications appear in the output. If a failover model also fails, the cascade continues to the next model in the chain. Every decision is logged.
 
-## Install
+## 🚀 Install
 
 ```bash
 cp model-failover.ts ~/.config/opencode/plugins/model-failover.ts
@@ -14,7 +41,7 @@ cp model-failover.ts ~/.config/opencode/plugins/model-failover.ts
 
 No npm, no build step, no dependencies. OpenCode runs TypeScript natively.
 
-## Disable
+## ⏹️ Disable
 
 ```bash
 mv ~/.config/opencode/plugins/model-failover.ts{,.disabled}
@@ -22,7 +49,7 @@ mv ~/.config/opencode/plugins/model-failover.ts{,.disabled}
 
 Or set `"enabled": false` in the config.
 
-## Configuration
+## ⚙️ Configuration
 
 `~/.config/opencode/model-failover.json`:
 
@@ -45,7 +72,7 @@ Or set `"enabled": false` in the config.
 | `chain` | `object[]` | `[]` | Ordered model entries `{ model, variant? }` where `model` is `"providerID/modelID"`. Variant can be `max`, `high`, `medium`, `low`, etc. |
 | `log_level` | `string` | `"info"` | `"silent"`, `"error"`, `"info"`, or `"debug"`. |
 
-## Logs
+## 🪵 Logs
 
 `~/.config/opencode/model-failover.log` (append-only). Format: `[ISO_TIMESTAMP] [LEVEL] message`.
 
@@ -53,7 +80,7 @@ Or set `"enabled": false` in the config.
 tail -f ~/.config/opencode/model-failover.log
 ```
 
-## Behavior
+## 📖 Behavior
 
 | Event | Reaction |
 |---|---|
@@ -68,7 +95,7 @@ tail -f ~/.config/opencode/model-failover.log
 
 Current: **v1.0.32** — Fixed `models`→`chain` variable reference in log message; doc type name `ChainEntry`.
 
-## Files
+## 📁 Files
 
 | File | Purpose |
 |---|---|
@@ -76,6 +103,6 @@ Current: **v1.0.32** — Fixed `models`→`chain` variable reference in log mess
 | `README.md` | This file. |
 | `AGENTS.md` | AI agent context. |
 
-## License
+## 📄 License
 
 MIT
