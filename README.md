@@ -66,7 +66,7 @@ tail -f ~/.config/opencode/model-failover.log
 
 ## Version
 
-Current: **v1.0.31** — Config array `models` renamed to `chain`, interface `ModelEntry` → `ChainEntry`.
+Current: **v1.0.32** — Fixed `models`→`chain` variable reference in log message; doc type name `ChainEntry`.
 
 ## Files
 

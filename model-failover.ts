@@ -20,7 +20,7 @@
 *	}
 *
 *	@name model-failover
-*	@version 1.0.31
+*	@version 1.0.32
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -157,7 +157,7 @@ function loadConfig()
 	STATE.config     = opts ;
 
 	log( LOG_LEVEL.INFO, "Config loaded" ) ;
-	log( LOG_LEVEL.INFO, `Loaded: ${ models.length } models, enabled: ${ opts.enabled }` ) ;
+	log( LOG_LEVEL.INFO, `Loaded: ${ chain.length } models, enabled: ${ opts.enabled }` ) ;
 
 	return opts ;
 }
