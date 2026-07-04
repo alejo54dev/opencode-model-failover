@@ -56,14 +56,14 @@ const STATE : State =
 	isBusy        : false,
 } ;
 
-// ─── Config ────────────────────────────────────────────────────────────────
-
 const CONFIG =
 {
 	enabled  : true,
 	models   : [] as ModelEntry[],
 	logLevel : "info" as "silent" | "error" | "info" | "debug",
 };
+
+// ─── Config ────────────────────────────────────────────────────────────────
 
 function loadConfig()
 {
