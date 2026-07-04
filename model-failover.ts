@@ -20,7 +20,7 @@
 *	}
 *
 *	@name model-failover
-*	@version 1.0.32
+*	@version 1.0.33
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -129,15 +129,14 @@ interface ChatOutput
 function loadConfig()
 {
 	let file : Record<string, unknown> = {};
-
 	try
 	{
 		file = JSON.parse( readFileSync( CONFIG_FILE, "utf-8" ) );
+		log( LOG_LEVEL.INFO, "Config loaded" ) ;
 	}
 	catch
 	{
 		log( LOG_LEVEL.ERROR, `Config not found or parse error at ${ CONFIG_FILE }` ) ;
-		return ;
 	}
 
 	const chain = Array.isArray( file.chain )
@@ -156,7 +155,6 @@ function loadConfig()
 	CONFIG.log_level = opts.log_level ;
 	STATE.config     = opts ;
 
-	log( LOG_LEVEL.INFO, "Config loaded" ) ;
 	log( LOG_LEVEL.INFO, `Loaded: ${ chain.length } models, enabled: ${ opts.enabled }` ) ;
 
 	return opts ;
@@ -210,7 +208,7 @@ async function failover( sessionID : string, client : PluginInput[ "client" ] ) 
 	try
 	{
 		const chain = STATE.config.chain ;
-		
+
 		for ( let i = 0 ; i < chain.length ; i ++ )
 		{
 			const entry = chain[ i ] ;
