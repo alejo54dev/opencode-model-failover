@@ -91,18 +91,15 @@ tail -f ~/.config/opencode/model-failover.log
 | Chain exhausted | "❌ Failover chain exhausted" sent to session. |
 | User switches model via `/models` | Respects user's choice; next `session.error` restarts cascade from the beginning. |
 
-## Version
+## 💬 Notes
 
-Current: **v1.0.32** — Fixed `models`→`chain` variable reference in log message; doc type name `ChainEntry`.
+Less is more. :)
 
-## 📁 Files
+## 👤 Authors
 
-| File | Purpose |
-|---|---|
-| `model-failover.ts` | The plugin. Single TypeScript file, zero dependencies. |
-| `README.md` | This file. |
-| `AGENTS.md` | AI agent context. |
+- Alejandro Carraretto
+- DeepSeek-V4
 
 ## 📄 License
 
-MIT
+MIT — version 1.0.32
