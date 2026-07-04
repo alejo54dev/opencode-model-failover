@@ -1,4 +1,4 @@
-# Model Failover (never don't stop)
+# Model Failover (never stop)
 
 ![Version](https://img.shields.io/badge/version-1.0.32-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
