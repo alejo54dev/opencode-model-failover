@@ -29,7 +29,7 @@ Or set `"enabled": false` in the config.
 ```json
 {
 	"enabled": true,
-	"models":
+	"chain":
 	[
 		{ "model": "opencode-go/deepseek-v4-flash", "variant": "max" },
 		{ "model": "opencode-go/deepseek-v4-pro", "variant": "medium" },
@@ -42,7 +42,7 @@ Or set `"enabled": false` in the config.
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `enabled` | `boolean` | `true` | Master switch. |
-| `models` | `object[]` | `[]` | Ordered model entries `{ model, variant? }` where `model` is `"providerID/modelID"`. Variant can be `max`, `high`, `medium`, `low`, etc. |
+| `chain` | `object[]` | `[]` | Ordered model entries `{ model, variant? }` where `model` is `"providerID/modelID"`. Variant can be `max`, `high`, `medium`, `low`, etc. |
 | `log_level` | `string` | `"info"` | `"silent"`, `"error"`, `"info"`, or `"debug"`. |
 
 ## Logs
@@ -66,7 +66,7 @@ tail -f ~/.config/opencode/model-failover.log
 
 ## Version
 
-Current: **v1.0.30** — 1s delay between abort and prompt for reliable failover injection.
+Current: **v1.0.31** — Config array `models` renamed to `chain`, interface `ModelEntry` → `ChainEntry`.
 
 ## Files
 

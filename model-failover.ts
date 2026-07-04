@@ -10,7 +10,7 @@
 *	Example config:
 *	{
 *		"enabled": true,
-*		"models":
+*		"chain":
 *		[
 *			{ "model": "opencode-go/deepseek-v4-flash", "variant": "max" },
 *			{ "model": "opencode-go/deepseek-v4-pro", "variant": "medium" },
@@ -20,7 +20,7 @@
 *	}
 *
 *	@name model-failover
-*	@version 1.0.30
+*	@version 1.0.31
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -59,13 +59,13 @@ const STATE : State =
 const CONFIG =
 {
 	enabled   : true,
-	models    : [] as ModelEntry[],
+	chain     : [] as ChainEntry[],
 	log_level : "info" as "silent" | "error" | "info" | "debug",
 };
 
 // ─── Interfaces ────────────────────────────────────────────────────────────
 
-interface ModelEntry
+interface ChainEntry
 {
 	model : string ;
 	variant? : string ;
@@ -81,7 +81,7 @@ interface ParsedModel
 interface Config
 {
 	enabled   : boolean ;
-	models    : ModelEntry[ ] ;
+	chain     : ChainEntry[ ] ;
 	log_level : string ;
 }
 
@@ -140,8 +140,8 @@ function loadConfig()
 		return ;
 	}
 
-	const models = Array.isArray( file.models )
-		? file.models.filter( ( e : any ) => typeof e?.model == "string" && e.model != "" )
+	const chain = Array.isArray( file.chain )
+		? file.chain.filter( ( e : any ) => typeof e?.model == "string" && e.model != "" )
 		: [] ;
 
 	const level = ( file.log_level ?? "" ).toLowerCase() ;
@@ -149,7 +149,7 @@ function loadConfig()
 	const opts =
 	{
 		enabled   : typeof file.enabled == "boolean" ? file.enabled : true,
-		models    : models,
+		chain     : chain,
 		log_level : level in LOG_LEVEL ? level : "info",
 	} as typeof CONFIG;
 
@@ -183,7 +183,7 @@ function log( level : number, message : string ) : void
 // ─── Helpers ───────────────────────────────────────────────────────────────
 
 // Parse a "provider/model" string into providerID + modelID + optional variant
-function parseEntry( entry : ModelEntry ) : ParsedModel | null
+function parseEntry( entry : ChainEntry ) : ParsedModel | null
 {
 	const slash = entry.model.indexOf( "/" ) ;
 
@@ -202,18 +202,18 @@ function parseEntry( entry : ModelEntry ) : ParsedModel | null
 async function failover( sessionID : string, client : PluginInput[ "client" ] ) : Promise< void >
 {
 	if ( STATE.isBusy ) return ;
-	if ( ! STATE.config?.models?.length ) return ;
+	if ( ! STATE.config?.chain?.length ) return ;
 	if ( ! sessionID ) return ;
 
 	STATE.isBusy = true ;
 
 	try
 	{
-		const models = STATE.config.models ;
-
-		for ( let i = 0 ; i < models.length ; i ++ )
+		const chain = STATE.config.chain ;
+		
+		for ( let i = 0 ; i < chain.length ; i ++ )
 		{
-			const entry = models[ i ] ;
+			const entry = chain[ i ] ;
 			const model = parseEntry( entry ) ;
 			const label = `${ entry.model }${ entry.variant ? ":" + entry.variant : "" }` ;
 
