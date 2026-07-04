@@ -58,7 +58,7 @@ tail -f ~/.config/opencode/model-failover.log
 | Event | Reaction |
 |---|---|
 | `session.error` (any status code) | Immediate failover — abort session, pick next model, re-prompt with "Continue." |
-| `session.error` while already in a cascade (`idx > 0`) | Cascade continues to the next model in the chain. |
+| Error during failover cascade | Handled inline by the for-loop (logged + next model). Stale `session.error` events dropped by `isBusy` guard. |
 | `MessageAbortedError` | Ignored. |
 | Failover `prompt()` fails | Error logged, cascade advances to the next model. |
 | Chain exhausted | "❌ Failover chain exhausted" sent to session. |
