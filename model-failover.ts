@@ -37,7 +37,26 @@ const CONFIG_DIR  = join( homedir(), ".config", "opencode" ) ;
 const CONFIG_FILE = join( CONFIG_DIR, "model-failover.json" ) ;
 const LOG_FILE    = join( CONFIG_DIR, "model-failover.log" ) ;
 
-// ─── Defaults & Config ─────────────────────────────────────────────────────
+// ─── Constants ─────────────────────────────────────────────────────────────
+
+const LOG_LEVEL =
+{
+	SILENT : 0,
+	ERROR  : 1,
+	INFO   : 2,
+	DEBUG  : 3,
+} as const ;
+
+const STATE : State =
+{
+	config        : null,
+	sessionID     : null,
+	originalModel : null,
+	failoverModel : null,
+	isBusy        : false,
+} ;
+
+// ─── Config ────────────────────────────────────────────────────────────────
 
 const CONFIG =
 {
@@ -81,25 +100,6 @@ function loadConfig()
 
 	return opts ;
 }
-
-// ─── Constants ─────────────────────────────────────────────────────────────
-
-const LOG_LEVEL =
-{
-	SILENT : 0,
-	ERROR  : 1,
-	INFO   : 2,
-	DEBUG  : 3,
-} as const ;
-
-const STATE : State =
-{
-	config        : null,
-	sessionID     : null,
-	originalModel : null,
-	failoverModel : null,
-	isBusy        : false,
-} ;
 
 // ─── Logger ────────────────────────────────────────────────────────────────
 
