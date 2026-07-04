@@ -66,7 +66,7 @@ tail -f ~/.config/opencode/model-failover.log
 
 ## Version
 
-Current: **v1.0.27** — Refactored log levels: added silent (0) mode, LOG_LEVEL as single source of truth, removed LogLevelName type.
+Current: **v1.0.28** — CONFIG moved to Constants, Interfaces after Constants.
 
 ## Files
 

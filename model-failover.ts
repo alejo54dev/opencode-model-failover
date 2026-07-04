@@ -20,7 +20,7 @@
 *	}
 *
 *	@name model-failover
-*	@version 1.0.27
+*	@version 1.0.28
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
