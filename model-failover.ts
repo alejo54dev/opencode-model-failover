@@ -16,11 +16,11 @@
 *			{ "model": "opencode-go/deepseek-v4-pro", "variant": "medium" },
 *			{ "model": "deepseek/deepseek-v4-flash-free", "variant": "max" }
 *		],
-*		"logLevel": "info"     // "silent" | "error" | "info" | "debug"
+*		"log_level": "info"     // "silent" | "error" | "info" | "debug"
 *	}
 *
 *	@name model-failover
-*	@version 1.0.28
+*	@version 1.0.30
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -58,9 +58,9 @@ const STATE : State =
 
 const CONFIG =
 {
-	enabled  : true,
-	models   : [] as ModelEntry[],
-	logLevel : "info" as "silent" | "error" | "info" | "debug",
+	enabled   : true,
+	models    : [] as ModelEntry[],
+	log_level : "info" as "silent" | "error" | "info" | "debug",
 };
 
 // ─── Interfaces ────────────────────────────────────────────────────────────
@@ -80,9 +80,9 @@ interface ParsedModel
 
 interface Config
 {
-	enabled  : boolean ;
-	models   : ModelEntry[ ] ;
-	logLevel : string ;
+	enabled   : boolean ;
+	models    : ModelEntry[ ] ;
+	log_level : string ;
 }
 
 interface State
@@ -144,17 +144,17 @@ function loadConfig()
 		? file.models.filter( ( e : any ) => typeof e?.model == "string" && e.model != "" )
 		: [] ;
 
-	const level = ( file.logLevel ?? "" ).toLowerCase() ;
+	const level = ( file.log_level ?? "" ).toLowerCase() ;
 
 	const opts =
 	{
-		enabled  : typeof file.enabled == "boolean" ? file.enabled : true,
-		models   : models,
-		logLevel : level in LOG_LEVEL ? level : "info",
+		enabled   : typeof file.enabled == "boolean" ? file.enabled : true,
+		models    : models,
+		log_level : level in LOG_LEVEL ? level : "info",
 	} as typeof CONFIG;
 
-	CONFIG.logLevel = opts.logLevel ;
-	STATE.config    = opts ;
+	CONFIG.log_level = opts.log_level ;
+	STATE.config     = opts ;
 
 	log( LOG_LEVEL.INFO, "Config loaded" ) ;
 	log( LOG_LEVEL.INFO, `Loaded: ${ models.length } models, enabled: ${ opts.enabled }` ) ;
@@ -167,7 +167,7 @@ function loadConfig()
 // Append timestamped entry to ~/.config/opencode/model-failover.log
 function log( level : number, message : string ) : void
 {
-	const min = LOG_LEVEL[ ( CONFIG.logLevel ?? "info" ).toUpperCase() ] ?? LOG_LEVEL.ERROR ;
+	const min = LOG_LEVEL[ ( CONFIG.log_level ?? "info" ).toUpperCase() ] ?? LOG_LEVEL.ERROR ;
 
 	if ( level > min ) return ;
 
@@ -226,6 +226,8 @@ async function failover( sessionID : string, client : PluginInput[ "client" ] ) 
 			log( LOG_LEVEL.INFO, `Trying ${ i }: ${ label }` ) ;
 
 			await client.session.abort( { path : { id : sessionID } } ).catch( () => {} ) ;
+
+			await new Promise( r => setTimeout( r, 1000 ) ) ;
 
 			try
 			{
@@ -410,10 +412,10 @@ export default ( async ( { client } : PluginInput ) =>
 
 	return {
 		// Hook: intercept session events for failover logic
-		event          : ( e : { event : SessionEvent } ) => onEvent( e, client ),
+		event : ( e : { event : SessionEvent } ) => onEvent( e, client ),
 		// Hook: intercept messages to inject failover model
 		"chat.message" : onChatMessage,
 		// Cleanup: reset all state
-		dispose        : reset,
+		dispose : reset,
 	} ;
 } ) satisfies Plugin ;

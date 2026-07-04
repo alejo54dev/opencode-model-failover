@@ -35,7 +35,7 @@ Or set `"enabled": false` in the config.
 		{ "model": "opencode-go/deepseek-v4-pro", "variant": "medium" },
 		{ "model": "deepseek/deepseek-v4-flash-free", "variant": "max" }
 	],
-	"logLevel": "info"
+	"log_level": "info"
 }
 ```
 
@@ -43,7 +43,7 @@ Or set `"enabled": false` in the config.
 |---|---|---|---|
 | `enabled` | `boolean` | `true` | Master switch. |
 | `models` | `object[]` | `[]` | Ordered model entries `{ model, variant? }` where `model` is `"providerID/modelID"`. Variant can be `max`, `high`, `medium`, `low`, etc. |
-| `logLevel` | `string` | `"info"` | `"silent"`, `"error"`, `"info"`, or `"debug"`. |
+| `log_level` | `string` | `"info"` | `"silent"`, `"error"`, `"info"`, or `"debug"`. |
 
 ## Logs
 
@@ -66,7 +66,7 @@ tail -f ~/.config/opencode/model-failover.log
 
 ## Version
 
-Current: **v1.0.28** — CONFIG moved to Constants, Interfaces after Constants.
+Current: **v1.0.30** — 1s delay between abort and prompt for reliable failover injection.
 
 ## Files
 
