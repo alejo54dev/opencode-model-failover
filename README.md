@@ -26,7 +26,11 @@ flowchart TD
 
 ## 💡 What it does
 
-When the active model fails with a session.error the plugin immediately aborts the session, picks the next model in the chain, and sends a "Continue." re-prompt so the new model picks up the task using the existing conversation context. Notifications appear in the output. If a failover model also fails, the cascade continues to the next model in the chain. Every decision is logged.
+- **Automatic failover** — detects `session.error` (all status codes), aborts the session, selects the next model in the chain, and re-prompts with "Continue." The new model takes over with the existing conversation context.
+
+- **Cascade logic** — if a failover model also fails, the chain advances to the next available model. Every decision is logged. If the chain is exhausted, a clear "❌ Failover chain exhausted" message is sent.
+
+- **Unattended** — no manual intervention required. Notifications appear in the output. `MessageAbortedError` is ignored — only real errors trigger the cascade.
 
 ## 🚀 Install
 
