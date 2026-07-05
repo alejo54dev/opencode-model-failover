@@ -12,16 +12,34 @@
 
 ```mermaid
 flowchart TD
-    A["⚠️ session.error / retry"] --> B["🛑 Abort session"]
-    B --> C{"🔄 Try model<br/>from chain"}
-    C -->|✅ Success| D["✏️ Override model<br/>Continue."]
-    C -->|❌ Failure| E["⬆️ Next in chain<br/>or ❌ exhausted"]
+    A["⚠️ session.error /<br/>session.status (retry)"]
+    A --> B{"MessageAbortedError<br/>or isBusy or stale?"}
+    B -->|"✅ Yes"| C["⏭️ Skip / ignore"]
+    B -->|"❌ No"| D["🛑 Start failover()"]
 
-    style A fill:#1a1a2e,stroke:#e94560,color:#fff
-    style B fill:#16213e,stroke:#0f3460,color:#fff
-    style C fill:#16213e,stroke:#e94560,color:#fff
+    D --> E{"Next model<br/>in chain?"}
+    E -->|"✅ Yes"| F["❌ Abort session<br/>→ wait 1s"]
+    F --> G["💬 Prompt 'Continue.'<br/>with &lt;model&gt;"]
+    G --> H{"Response OK?"}
+    H -->|"✅ Yes"| I["✏️ Override model<br/>(chat.message hook)"]
+    H -.->|"❌ No"| E
+    E -->|"❌ Exhausted"| J["❌ Chain exhausted<br/>→ send message"]
+
+    K["🛑 session.deleted"]
+    K --> L["🧹 reset()"]
+
+    style A fill:#16213e,stroke:#e94560,color:#fff
+    style B fill:#16213e,stroke:#e94560,color:#fff
+    style C fill:#1a1a2e,stroke:#53a8b6,color:#fff
     style D fill:#0f3460,stroke:#53a8b6,color:#fff
-    style E fill:#0f3460,stroke:#53a8b6,color:#fff
+    style E fill:#16213e,stroke:#e94560,color:#fff
+    style F fill:#0f3460,stroke:#53a8b6,color:#fff
+    style G fill:#0f3460,stroke:#53a8b6,color:#fff
+    style H fill:#16213e,stroke:#e94560,color:#fff
+    style I fill:#1a1a2e,stroke:#e94560,color:#fff
+    style J fill:#1a1a2e,stroke:#e94560,color:#fff
+    style K fill:#1a1a2e,stroke:#e94560,color:#fff
+    style L fill:#1a1a2e,stroke:#e94560,color:#fff
 ```
 
 ## 💡 What it does
