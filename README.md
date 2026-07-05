@@ -4,23 +4,23 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![OpenCode](https://img.shields.io/badge/OpenCode-plugin-purple)
 
-> Estás en medio de algo importante, el modelo falla, perdes el hilo, tenés que reiniciar la conversación, elegir otro modelo, repetirte.
+> You're in the middle of something important, the model fails, you lose the thread, you have to restart the conversation, pick another model, repeat yourself.
 
 ## 💡 What it does
 
-> Los modelos fallan. Tu conversación no.
+> Models fail. Your conversation doesn't.
 
-- **Failover automático** — detecta el error (excepto si vos cancelaste), aborta, agarra el siguiente modelo, le manda "Continue." No te enteraste.
+- **Auto failover** — detects the error (except if you cancelled), aborts, grabs the next model, sends "Continue." You never noticed.
 
-- **Cascada inteligente** — si el segundo también falla, pasa al tercero. Si todos fallan, avisa claro. Sin silencios incómodos.
+- **Smart cascade** — if the second one also fails, it moves to the third. If all fail, it says so clearly. No awkward silence.
 
-- **Cero intervención** — no tocas nada. Solo errores reales activan la cascada.
+- **Zero intervention** — you touch nothing. Only real errors trigger the cascade.
 
 ## 🧠 Philosophy
 
-Una sesión muerta es productividad asesinada. Los errores de modelo son esperables — abortás limpio, elegís el siguiente, la charla sigue.
+A dead session is murdered productivity. Model errors are expected infrastructure — you abort cleanly, pick the next one, the conversation continues.
 
-No todos los errores son iguales. `MessageAbortedError` se ignora — vos cancelaste, no es failover. Solo los errores reales importan.
+Not all errors are equal. `MessageAbortedError` is ignored — you cancelled, not a failover. Only real errors matter.
 
 ## 🔄 How it works
 
