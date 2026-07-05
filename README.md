@@ -97,6 +97,19 @@ Copy `model-failover.json` (included in this repo) to `~/.config/opencode/` and 
 tail -f ~/.config/opencode/model-failover.log
 ```
 
+```log
+[2026-07-05T10:30:00.000Z] [INFO]: Config loaded
+[2026-07-05T10:30:01.000Z] [INFO]: Loaded: 3 models, enabled: true
+[2026-07-05T10:35:22.000Z] [INFO]: Trying 0: opencode-go/deepseek-v4-flash
+[2026-07-05T10:35:25.000Z] [INFO]: Override: opencode-go/deepseek-v4-flash
+[2026-07-05T10:36:00.000Z] [INFO]: Current model: providerID/modelID
+[2026-07-05T10:40:00.000Z] [INFO]: Trying 1: opencode-go/deepseek-v4-pro
+[2026-07-05T10:40:00.000Z] [INFO]: Chain models exhausted
+[2026-07-05T10:40:01.000Z] [ERROR]: Cascade error for sid_abc: connection refused
+[2026-07-05T10:45:00.000Z] [DEBUG]: Prompt aborted for opencode-go/deepseek-v4-pro, stopping cascade
+[2026-07-05T10:50:00.000Z] [DEBUG]: Stale skip: 304 (override active)
+```
+
 ## 📖 Behavior
 
 | Event | Reaction |
