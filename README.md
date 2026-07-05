@@ -4,25 +4,23 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![OpenCode](https://img.shields.io/badge/OpenCode-plugin-purple)
 
-> Automatic model failover plugin for **OpenCode**. Detects any `session.error`
-> (except `MessageAbortedError`) and switches the active session to the next model
-> in a configured chain — transparently and unattended.
+> Estás en medio de algo importante, el modelo falla, perdes el hilo, tenés que reiniciar la conversación, elegir otro modelo, repetirte.
 
 ## 💡 What it does
 
-- **Automatic failover** — detects `session.error` (any status code except `MessageAbortedError`), aborts the session, selects the next model in the chain, and re-prompts with "Continue." The new model takes over with the existing conversation context.
+> Los modelos fallan. Tu conversación no.
 
-- **Cascade logic** — if a failover model also fails, the chain advances to the next available model. Every decision is logged. If the chain is exhausted, a clear "❌ Failover chain exhausted" message is sent.
+- **Failover automático** — detecta el error (excepto si vos cancelaste), aborta, agarra el siguiente modelo, le manda "Continue." No te enteraste.
 
-- **Unattended** — no manual intervention required. Notifications appear in the output. `MessageAbortedError` is ignored — only real errors trigger the cascade.
+- **Cascada inteligente** — si el segundo también falla, pasa al tercero. Si todos fallan, avisa claro. Sin silencios incómodos.
+
+- **Cero intervención** — no tocas nada. Solo errores reales activan la cascada.
 
 ## 🧠 Philosophy
 
-A dead session is a productivity killer. Model failures are treated as expected infrastructure events — abort cleanly, pick the next model in the chain, re-prompt with "Continue." The conversation never breaks stride.
+Una sesión muerta es productividad asesinada. Los errores de modelo son esperables — abortás limpio, elegís el siguiente, la charla sigue.
 
-Not all errors are equal. `MessageAbortedError` is silently ignored — the user or another plugin cancelled, not a failover scenario. Only real errors trigger the cascade.
-
-If every model fails, the plugin sends a clear "❌ Failover chain exhausted" message. Honesty over silence.
+No todos los errores son iguales. `MessageAbortedError` se ignora — vos cancelaste, no es failover. Solo los errores reales importan.
 
 ## 🔄 How it works
 
