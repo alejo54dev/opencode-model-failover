@@ -14,13 +14,13 @@
 *		[
 *			{ "model": "opencode-go/deepseek-v4-flash", "variant": "max" },
 *			{ "model": "opencode-go/deepseek-v4-pro", "variant": "medium" },
-*			{ "model": "deepseek/deepseek-v4-flash-free", "variant": "max" }
+*			{ "model": "deepseek/deepseek-v4-flash-free", "variant": "max" },
 *		],
-*		"log_level": "info"     // "silent" | "error" | "info" | "debug"
+*		"log_level": "info",    // "silent" | "error" | "info" | "debug"
 *	}
 *
 *	@name model-failover
- *	@version 1.0.34
+*	@version 1.0.34
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -143,13 +143,11 @@ function loadConfig()
 		? file.chain.filter( ( e : any ) => typeof e?.model == "string" && e.model != "" )
 		: [] ;
 
-	const level = ( file.log_level ?? "" ).toLowerCase() ;
-
 	const opts =
 	{
-		enabled   : typeof file.enabled == "boolean" ? file.enabled : true,
+		enabled   : file.enabled    ?? CONFIG.enabled,
+		log_level : file.log_level  ?? CONFIG.log_level,
 		chain     : chain,
-		log_level : level in LOG_LEVEL ? level : "info",
 	} as typeof CONFIG;
 
 	CONFIG.log_level = opts.log_level ;
