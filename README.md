@@ -1,6 +1,6 @@
 # Model Failover (never stop)
 
-![Version](https://img.shields.io/badge/version-1.0.32-blue)
+![Version](https://img.shields.io/badge/version-1.0.34-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![OpenCode](https://img.shields.io/badge/OpenCode-plugin-purple)
 
@@ -66,9 +66,9 @@ No npm, no build step, no dependencies. OpenCode runs TypeScript natively.
 
 ## ⚙️ Configuration
 
-Copy `model-failover.json` (included in this repo) to `~/.config/opencode/` and edit:
+Copy `model-failover.jsonc` (included in this repo) to `~/.config/opencode/` and edit:
 
-```json
+```jsonc
 {
 	"enabled": true,
 	"chain":
@@ -77,7 +77,7 @@ Copy `model-failover.json` (included in this repo) to `~/.config/opencode/` and 
 		{ "model": "opencode-go/deepseek-v4-pro", "variant": "medium" },
 		{ "model": "deepseek/deepseek-v4-flash-free", "variant": "max" }
 	],
-	"log_level": "info"
+	"log_level": "info"     // "silent" | "error" | "info" | "debug"
 }
 ```
 
@@ -130,4 +130,4 @@ Less is more. :)
 
 ## 📄 License
 
-MIT — version 1.0.32
+MIT — version 1.0.34

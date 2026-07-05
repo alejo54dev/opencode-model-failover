@@ -5,7 +5,7 @@
 *	over through a configured chain of models.
 *
 *	Install: cp model-failover.ts ~/.config/opencode/plugins/model-failover.ts
-*	Config:  ~/.config/opencode/model-failover.json
+ *	Config:  ~/.config/opencode/model-failover.jsonc
 *
 *	Example config:
 *	{
@@ -20,7 +20,7 @@
 *	}
 *
 *	@name model-failover
-*	@version 1.0.33
+ *	@version 1.0.34
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -34,7 +34,7 @@ import { join } from "node:path" ;
 // ─── Paths ─────────────────────────────────────────────────────────────────
 
 const CONFIG_DIR  = join( homedir(), ".config", "opencode" ) ;
-const CONFIG_FILE = join( CONFIG_DIR, "model-failover.json" ) ;
+const CONFIG_FILE = join( CONFIG_DIR, "model-failover.jsonc" ) ;
 const LOG_FILE    = join( CONFIG_DIR, "model-failover.log" ) ;
 
 // ─── Constants ─────────────────────────────────────────────────────────────
@@ -131,7 +131,7 @@ function loadConfig()
 	let file : Record<string, unknown> = {};
 	try
 	{
-		file = JSON.parse( readFileSync( CONFIG_FILE, "utf-8" ) );
+		file = Bun.JSONC.parse( readFileSync( CONFIG_FILE, "utf-8" ) );
 		log( LOG_LEVEL.INFO, "Config loaded" ) ;
 	}
 	catch
