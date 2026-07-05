@@ -8,6 +8,22 @@
 > (except `MessageAbortedError`) and switches the active session to the next model
 > in a configured chain — transparently and unattended.
 
+## 💡 What it does
+
+- **Automatic failover** — detects `session.error` (all status codes), aborts the session, selects the next model in the chain, and re-prompts with "Continue." The new model takes over with the existing conversation context.
+
+- **Cascade logic** — if a failover model also fails, the chain advances to the next available model. Every decision is logged. If the chain is exhausted, a clear "❌ Failover chain exhausted" message is sent.
+
+- **Unattended** — no manual intervention required. Notifications appear in the output. `MessageAbortedError` is ignored — only real errors trigger the cascade.
+
+## 🧠 Philosophy
+
+A dead session is a productivity killer. Model failures are treated as expected infrastructure events — abort cleanly, pick the next model in chain, re-prompt with "Continue." The conversation never breaks stride.
+
+Not all errors are equal. `MessageAbortedError` is silently ignored — the user or another plugin cancelled, not a failover scenario. Only real errors trigger the cascade.
+
+If every model fails, the plugin sends a clear "❌ Failover chain exhausted" message. Honesty over silence.
+
 ## 🔄 How it works
 
 ```mermaid
@@ -42,14 +58,6 @@ flowchart TD
     style L fill:#1a1a2e,stroke:#e94560,color:#fff
 ```
 
-## 💡 What it does
-
-- **Automatic failover** — detects `session.error` (all status codes), aborts the session, selects the next model in the chain, and re-prompts with "Continue." The new model takes over with the existing conversation context.
-
-- **Cascade logic** — if a failover model also fails, the chain advances to the next available model. Every decision is logged. If the chain is exhausted, a clear "❌ Failover chain exhausted" message is sent.
-
-- **Unattended** — no manual intervention required. Notifications appear in the output. `MessageAbortedError` is ignored — only real errors trigger the cascade.
-
 ## 🚀 Install
 
 ```bash
@@ -58,17 +66,9 @@ cp model-failover.ts ~/.config/opencode/plugins/model-failover.ts
 
 No npm, no build step, no dependencies. OpenCode runs TypeScript natively.
 
-## ⏹️ Disable
-
-```bash
-mv ~/.config/opencode/plugins/model-failover.ts{,.disabled}
-```
-
-Or set `"enabled": false` in the config.
-
 ## ⚙️ Configuration
 
-`~/.config/opencode/model-failover.json`:
+Copy `model-failover.json` (included in this repo) to `~/.config/opencode/` and edit:
 
 ```json
 {

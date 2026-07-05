@@ -1,0 +1,10 @@
+{
+	"enabled": true,
+	"chain":
+	[
+		{ "model": "opencode-go/deepseek-v4-flash", "variant": "max" },
+		{ "model": "opencode-go/deepseek-v4-pro", "variant": "medium" },
+		{ "model": "deepseek/deepseek-v4-flash-free", "variant": "max" }
+	],
+	"log_level": "info"
+}
