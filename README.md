@@ -10,7 +10,7 @@
 
 ## 💡 What it does
 
-- **Automatic failover** — detects `session.error` (all status codes), aborts the session, selects the next model in the chain, and re-prompts with "Continue." The new model takes over with the existing conversation context.
+- **Automatic failover** — detects `session.error` (any status code except `MessageAbortedError`), aborts the session, selects the next model in the chain, and re-prompts with "Continue." The new model takes over with the existing conversation context.
 
 - **Cascade logic** — if a failover model also fails, the chain advances to the next available model. Every decision is logged. If the chain is exhausted, a clear "❌ Failover chain exhausted" message is sent.
 
@@ -18,7 +18,7 @@
 
 ## 🧠 Philosophy
 
-A dead session is a productivity killer. Model failures are treated as expected infrastructure events — abort cleanly, pick the next model in chain, re-prompt with "Continue." The conversation never breaks stride.
+A dead session is a productivity killer. Model failures are treated as expected infrastructure events — abort cleanly, pick the next model in the chain, re-prompt with "Continue." The conversation never breaks stride.
 
 Not all errors are equal. `MessageAbortedError` is silently ignored — the user or another plugin cancelled, not a failover scenario. Only real errors trigger the cascade.
 
@@ -115,7 +115,7 @@ tail -f ~/.config/opencode/model-failover.log
 | Event | Reaction |
 |---|---|
 | `session.error` (any status code) | Immediate failover — abort session, pick next model, re-prompt with "Continue." |
-| Error during failover cascade | Handled inline by the for-loop (logged + next model). Stale `session.error` events dropped by `isBusy` guard. |
+| Error during failover cascade | Logged and advances to the next model in the chain. Stale `session.error` events dropped by `isBusy` guard. |
 | `MessageAbortedError` | Ignored. |
 | Failover `prompt()` fails | Error logged, cascade advances to the next model. |
 | Chain exhausted | "❌ Failover chain exhausted" sent to session. |
