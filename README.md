@@ -4,7 +4,7 @@
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![OpenCode](https://img.shields.io/badge/OpenCode-plugin-purple)
 
-> You're in the middle of something important, the model fails, you lose the thread, you have to restart the conversation, pick another model, repeat yourself.
+> You're in the middle of something important, the model fails, the task gets interrupted, you lose the thread. You have to pick another model, restart the flow. And if you leave it running and go to sleep? Time wasted, everything wrong. Not anymore!
 
 ## 💡 What it does
 
