@@ -123,7 +123,17 @@ interface ChatOutput
 	message? : { model? : ParsedModel } ;
 }
 
-// ─── Config ────────────────────────────────────────────────────────────────
+// ─── Global Helpers ──────────────────────────────────────────────────────────
+
+// Current local datetime as ISO-like string: "2026-07-06T20:30:26"
+function timestamp() : string
+{
+	const utc    = new Date() ;
+	const offset = utc.getTimezoneOffset() ;
+	const local  = new Date( utc.getTime() - offset * 60 * 1000 ) ;
+
+	return local.toISOString().slice( 0, 19 ) ;
+}
 
 // Load config from ~/.config/opencode/model-failover.json, fall back to defaults
 function loadConfig()
@@ -158,8 +168,6 @@ function loadConfig()
 	return opts ;
 }
 
-// ─── Logger ────────────────────────────────────────────────────────────────
-
 // Append timestamped entry to ~/.config/opencode/model-failover.log
 function log( level : number, message : string ) : void
 {
@@ -171,7 +179,7 @@ function log( level : number, message : string ) : void
 
 	try
 	{
-		appendFileSync( LOG_FILE, `[${ new Date().toISOString() }] [${ label }]: ${ message }\n` ) ;
+		appendFileSync( LOG_FILE, `[${ timestamp() }] [${ label }]: ${ message }\n` ) ;
 	}
 	catch {}
 }
