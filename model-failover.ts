@@ -20,7 +20,7 @@
 *	}
 *
 *	@name model-failover
-*	@version 1.0.35
+*	@version 1.0.36
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -227,11 +227,12 @@ async function failover( sessionID : string, client : PluginInput[ "client" ] ) 
 				continue ;
 			}
 
-			log( LOG_LEVEL.INFO, `Trying ${ i }: ${ label }` ) ;
+			await new Promise( r => setTimeout( r, 1000 ) ) ; // pre wait
 
+			log( LOG_LEVEL.INFO, `Trying ${ i }: ${ label }` ) ;
 			await client.session.abort( { path : { id : sessionID } } ).catch( () => {} ) ;
 
-			await new Promise( r => setTimeout( r, 3000 ) ) ;
+			await new Promise( r => setTimeout( r, 1000 ) ) ; // post wait
 
 			try
 			{
