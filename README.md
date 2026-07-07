@@ -32,7 +32,7 @@ flowchart TD
     B -->|"❌ No"| D["🛑 Start failover()"]
 
     D --> E{"Next model<br/>in chain?"}
-    E -->|"✅ Yes"| F["❌ Abort session<br/>→ wait 1s"]
+    E -->|"✅ Yes"| F["❌ Abort session<br/>→ wait 3s"]
     F --> G["💬 Prompt 'Continue.'<br/>with &lt;model&gt;"]
     G --> H{"Response OK?"}
     H -->|"✅ Yes"| I["✏️ Override model<br/>(chat.message hook)"]
@@ -100,7 +100,7 @@ tail -f ~/.config/opencode/model-failover.log
 [2026-07-05T10:30:01.000Z] [INFO]: Loaded: 3 models, enabled: true
 [2026-07-05T10:35:22.000Z] [INFO]: Trying 0: opencode-go/deepseek-v4-flash
 [2026-07-05T10:35:25.000Z] [INFO]: Override: opencode-go/deepseek-v4-flash
-[2026-07-05T10:36:00.000Z] [INFO]: Current model: providerID/modelID
+[2026-07-05T10:36:00.000Z] [INFO]: Current model: opencode-go/deepseek-v4-flash
 [2026-07-05T10:40:00.000Z] [INFO]: Trying 1: opencode-go/deepseek-v4-pro
 [2026-07-05T10:40:00.000Z] [INFO]: Chain models exhausted
 [2026-07-05T10:40:01.000Z] [ERROR]: Cascade error for sid_abc: connection refused
