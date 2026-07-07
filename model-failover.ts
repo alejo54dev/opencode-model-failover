@@ -20,7 +20,7 @@
 *	}
 *
 *	@name model-failover
-*	@version 1.0.34
+*	@version 1.0.35
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -396,6 +396,8 @@ function reset() : void
 	STATE.originalModel = null ;
 	STATE.failoverModel = null ;
 	STATE.isBusy        = false ;
+
+	log( LOG_LEVEL.INFO, "Disposed" ) ;
 }
 
 // ─── Plugin ────────────────────────────────────────────────────────────────
