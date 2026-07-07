@@ -5,7 +5,7 @@
 *	over through a configured chain of models.
 *
 *	Install: cp model-failover.ts ~/.config/opencode/plugins/model-failover.ts
- *	Config:  ~/.config/opencode/model-failover.jsonc
+*	Config:  ~/.config/opencode/model-failover.jsonc
 *
 *	Example config:
 *	{
@@ -128,10 +128,10 @@ interface ChatOutput
 // Load config from ~/.config/opencode/model-failover.json, fall back to defaults
 function loadConfig()
 {
-	let file : Record<string, unknown> = {};
+	let file : Record<string, unknown> = {} ;
 	try
 	{
-		file = Bun.JSONC.parse( readFileSync( CONFIG_FILE, "utf-8" ) );
+		file = Bun.JSONC.parse( readFileSync( CONFIG_FILE, "utf-8" ) ) ;
 		log( LOG_LEVEL.INFO, "Config loaded" ) ;
 	}
 	catch
@@ -148,7 +148,7 @@ function loadConfig()
 		enabled   : file.enabled    ?? CONFIG.enabled,
 		log_level : file.log_level  ?? CONFIG.log_level,
 		chain     : chain,
-	} as typeof CONFIG;
+	} as typeof CONFIG ;
 
 	CONFIG.log_level = opts.log_level ;
 	STATE.config     = opts ;
@@ -223,7 +223,7 @@ async function failover( sessionID : string, client : PluginInput[ "client" ] ) 
 
 			await client.session.abort( { path : { id : sessionID } } ).catch( () => {} ) ;
 
-			await new Promise( r => setTimeout( r, 1000 ) ) ;
+			await new Promise( r => setTimeout( r, 3000 ) ) ;
 
 			try
 			{
@@ -236,7 +236,7 @@ async function failover( sessionID : string, client : PluginInput[ "client" ] ) 
 							{ type : "text", text : "Continue." },
 						],
 					},
-				} ) ;
+				} );
 
 				const info  = result?.data?.info ;
 				const state = info?.state ;
@@ -257,7 +257,7 @@ async function failover( sessionID : string, client : PluginInput[ "client" ] ) 
 				{
 					log( LOG_LEVEL.DEBUG,
 						`Response error for ${ label }: ${ errMsg || state || "unknown" }`,
-					) ;
+					);
 					continue ;
 				}
 
@@ -286,7 +286,7 @@ async function failover( sessionID : string, client : PluginInput[ "client" ] ) 
 		} ).catch( ( err ) =>
 		{
 			log( LOG_LEVEL.DEBUG, `Exhausted prompt error for ${ sessionID }: ${ ( err as Error )?.message ?? "unknown" }` ) ;
-		} ) ;
+		} );
 	}
 	finally
 	{
@@ -341,7 +341,7 @@ async function onEvent( { event } : { event : SessionEvent }, client : PluginInp
 
 	log( LOG_LEVEL.ERROR,
 		`Fail: ${ STATE.originalModel?.providerID ?? "?" }/${ STATE.originalModel?.modelID ?? "?" } — ${ sc }`,
-	) ;
+	);
 
 	await failover( sid, client ) ;
 }
@@ -364,7 +364,7 @@ function onChatMessage( input : ChatInput, output : ChatOutput ) : void
 			providerID : sel.providerID,
 			modelID    : sel.modelID,
 			variant    : sel.variant,
-		} ;
+		};
 
 		log( LOG_LEVEL.INFO, `Current model: ${ STATE.originalModel.providerID }/${ STATE.originalModel.modelID }` ) ;
 	}
@@ -378,7 +378,7 @@ function onChatMessage( input : ChatInput, output : ChatOutput ) : void
 			providerID : sel.providerID,
 			modelID    : sel.modelID,
 			variant    : sel.variant,
-		} ;
+		};
 
 		log( LOG_LEVEL.INFO, `Model changed: ${ STATE.originalModel.providerID }/${ STATE.originalModel.modelID }` ) ;
 		return ;
@@ -413,5 +413,7 @@ export default ( async ( { client } : PluginInput ) =>
 		"chat.message" : onChatMessage,
 		// Cleanup: reset all state
 		dispose : reset,
-	} ;
+	};
 } ) satisfies Plugin ;
+
+// ─── END ──────────────────────────────────────────────────────────────
