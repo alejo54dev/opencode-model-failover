@@ -2,9 +2,9 @@
 	"enabled": true,
 	"chain":
 	[
-		{ "model": "opencode-go/deepseek-v4-flash", "variant": "max" },
 		{ "model": "opencode-zen/deepseek-v4-flash-free", "variant": "max" },
 		{ "model": "deepseek/deepseek-v4-flash", "variant": "max" },
+		{ "model": "deepseek/deepseek-v4-pro", "variant": "low" },
 	],
 	"log_level": "info",    // "silent" | "error" | "info" | "debug"
 }

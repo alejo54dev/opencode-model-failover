@@ -20,7 +20,7 @@
 *	}
 *
 *	@name model-failover
-*	@version 1.0.36
+*	@version 1.0.37
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -413,9 +413,13 @@ function reset() : void
 
 export default ( async ( { client } : PluginInput ) =>
 {
-	loadConfig() ;
+	const opts = loadConfig() ;
 
-	if ( ! STATE.config?.enabled ) return { } ;
+	if ( !opts.enabled )
+	{
+		log( LOG_LEVEL.INFO, "Disabled" ) ;
+		return {} ;
+	}
 
 	return {
 		// Hook: intercept session events for failover logic
