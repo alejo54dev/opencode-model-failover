@@ -13,7 +13,6 @@
 *		"chain":
 *		[
 *			{ "model": "opencode/hy3-free", "variant": "high" },
-*			{ "model": "opencode/north-mini-code-free", "variant": "high" },
 *			{ "model": "opencode/deepseek-v4-flash-free", "variant": "max" },
 *			{ "model": "deepseek/deepseek-v4-flash", "variant": "max" },
 *			{ "model": "deepseek/deepseek-v4-pro", "variant": "high" },
@@ -22,7 +21,7 @@
 *	}
 *
 *	@name model-failover
-*	@version 1.0.38
+ *	@version 1.0.40
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -49,21 +48,12 @@ const LOG_LEVEL =
 	DEBUG  : 3,
 } as const ;
 
-const STATE : State =
-{
-	config        : null,
-	sessionID     : null,
-	originalModel : null,
-	failoverModel : null,
-	isBusy        : false,
-} ;
-
 const CONFIG =
 {
 	enabled   : true,
 	chain     : [] as ChainEntry[],
 	log_level : "info" as "silent" | "error" | "info" | "debug",
-};
+} ;
 
 // ─── Interfaces ────────────────────────────────────────────────────────────
 
@@ -85,15 +75,6 @@ interface Config
 	enabled   : boolean ;
 	chain     : ChainEntry[ ] ;
 	log_level : string ;
-}
-
-interface State
-{
-	config        : Config | null ;
-	sessionID     : string | null ;
-	originalModel : ParsedModel | null ;
-	failoverModel : ParsedModel | null ;
-	isBusy        : boolean ;
 }
 
 interface SessionError
@@ -137,7 +118,7 @@ function timestamp() : string
 	return local.toISOString().slice( 0, 19 ) ;
 }
 
-// Load config from ~/.config/opencode/model-failover.json, fall back to defaults
+// Load config from ~/.config/opencode/model-failover.jsonc, fall back to defaults
 function loadConfig() : typeof CONFIG
 {
 	let file : Record<string, unknown> = {} ;
@@ -158,8 +139,6 @@ function loadConfig() : typeof CONFIG
 	CONFIG.enabled    = file.enabled    ?? CONFIG.enabled ;
 	CONFIG.chain      = chain           ?? CONFIG.chain ;
 	CONFIG.log_level  = file.log_level  ?? CONFIG.log_level ;
-
-	STATE.config = CONFIG ;
 
 	log( LOG_LEVEL.INFO, "Config loaded" ) ;
 	log( LOG_LEVEL.INFO, `Loaded: ${ CONFIG.chain.length } models` ) ;
@@ -183,237 +162,253 @@ function log( level : number, message : string ) : void
 	catch {}
 }
 
-// ─── Helpers ───────────────────────────────────────────────────────────────
+// ─── ModelFailover ──────────────────────────────────────────────────────────
 
-// Parse a "provider/model" string into providerID + modelID + optional variant
-function parseEntry( entry : ChainEntry ) : ParsedModel | null
+// Controller class: holds all failover state and logic (replaces module-level STATE).
+class ModelFailover
 {
-	const slash = entry.model.indexOf( "/" ) ;
+	private config        : typeof CONFIG ;
+	private client        : PluginInput[ "client" ] ;
+	private sessionID     : string | null   = null ;
+	private originalModel : ParsedModel | null = null ;
+	private failoverModel : ParsedModel | null = null ;
+	private isBusy        : boolean = false ;
 
-	if ( slash == -1 ) return null ;
-
-	return {
-		providerID : entry.model.substring( 0, slash ),
-		modelID    : entry.model.substring( slash + 1 ),
-		variant    : entry.variant,
-	} ;
-}
-
-// ─── Failover ──────────────────────────────────────────────────────────────
-
-// Iterate the model chain, abort retry loop, try each model in sequence until one responds OK
-async function failover( sessionID : string, client : PluginInput[ "client" ] ) : Promise< void >
-{
-	if ( STATE.isBusy ) return ;
-	if ( ! STATE.config?.chain?.length ) return ;
-	if ( ! sessionID ) return ;
-
-	STATE.isBusy = true ;
-
-	try
+	// Initialize: store config + client, no side effects
+	constructor( config : typeof CONFIG, client : PluginInput[ "client" ] )
 	{
-		const chain = STATE.config.chain ;
+		this.config = config ;
+		this.client = client ;
+	}
 
-		for ( let i = 0 ; i < chain.length ; i ++ )
+	// Parse a "provider/model" string into providerID + modelID + optional variant
+	protected parseEntry( entry : ChainEntry ) : ParsedModel | null
+	{
+		const slash = entry.model.indexOf( "/" ) ;
+
+		if ( slash == -1 ) return null ;
+
+		return {
+			providerID : entry.model.substring( 0, slash ),
+			modelID    : entry.model.substring( slash + 1 ),
+			variant    : entry.variant,
+		} ;
+	}
+
+	// Iterate the model chain, abort retry loop, try each model in sequence until one responds OK
+	protected async failover( sessionID : string ) : Promise< void >
+	{
+		if ( this.isBusy ) return ;
+		if ( ! this.config?.chain?.length ) return ;
+		if ( ! sessionID ) return ;
+
+		this.isBusy = true ;
+
+		try
 		{
-			const entry = chain[ i ] ;
-			const model = parseEntry( entry ) ;
-			const label = `${ entry.model }${ entry.variant ? ":" + entry.variant : "" }` ;
+			const chain = this.config.chain ;
 
-			if ( ! model )
+			for ( let i = 0 ; i < chain.length ; i ++ )
 			{
-				log( LOG_LEVEL.ERROR, `Bad model at [${ i }]: ${ entry.model }, skipping` ) ;
-				continue ;
-			}
+				const entry = chain[ i ] ;
+				const model = this.parseEntry( entry ) ;
+				const label = `${ entry.model }${ entry.variant ? ":" + entry.variant : "" }` ;
 
-			await new Promise( r => setTimeout( r, 1000 ) ) ; // pre wait
-
-			log( LOG_LEVEL.INFO, `Trying ${ i }: ${ label }` ) ;
-			await client.session.abort( { path : { id : sessionID } } ).catch( () => {} ) ;
-
-			await new Promise( r => setTimeout( r, 1000 ) ) ; // post wait
-
-			try
-			{
-				const result = await client.session.prompt( {
-					path : { id : sessionID },
-					body : {
-						model,
-						parts : [
-							// ignored: UI-only notification, NOT sent to model
-							{ type : "text", text : `✅ Failover to [${ label }]`, ignored : true },
-							// synthetic: system-generated, sent to model
-							{ type : "text", text : "Continue.", synthetic: true },
-						],
-					},
-				} );
-
-				const info  = result?.data?.info ;
-				const state = info?.state ;
-
-				const errMsg = info?.error?.data?.message
-					?? info?.error?.message
-					?? result?.error?.data?.message
-					?? result?.error?.message
-					?? "" ;
-
-				if ( errMsg == "Aborted" )
+				if ( ! model )
 				{
-					log( LOG_LEVEL.DEBUG, `Prompt aborted for ${ label }, stopping cascade` ) ;
-					return ;
-				}
-
-				if ( errMsg || ( state && state != "ok" ) )
-				{
-					log( LOG_LEVEL.DEBUG,
-						`Response error for ${ label }: ${ errMsg || state || "unknown" }`,
-					);
+					log( LOG_LEVEL.ERROR, `Bad model at [${ i }]: ${ entry.model }, skipping` ) ;
 					continue ;
 				}
 
-				log( LOG_LEVEL.INFO, `Override: ${ label }` ) ;
-				STATE.failoverModel = model ;
-				return ;
+				await new Promise( r => setTimeout( r, 1000 ) ) ; // pre wait
+
+				log( LOG_LEVEL.INFO, `Trying ${ i }: ${ label }` ) ;
+				await this.client.session.abort( { path : { id : sessionID } } ).catch( () => {} ) ;
+
+				await new Promise( r => setTimeout( r, 1000 ) ) ; // post wait
+
+				try
+				{
+					const result = await this.client.session.prompt( {
+						path : { id : sessionID },
+						body : {
+							model,
+							parts : [
+								// ignored: UI-only notification, NOT sent to model
+								{ type : "text", text : `✅ Failover to [${ label }]`, ignored : true },
+								// synthetic: system-generated, sent to model
+								{ type : "text", text : "Continue.", synthetic: true },
+							],
+						},
+					} );
+
+					const info  = result?.data?.info ;
+					const state = info?.state ;
+
+					const errMsg = info?.error?.data?.message
+						?? info?.error?.message
+						?? result?.error?.data?.message
+						?? result?.error?.message
+						?? "" ;
+
+					if ( errMsg == "Aborted" )
+					{
+						log( LOG_LEVEL.DEBUG, `Prompt aborted for ${ label }, stopping cascade` ) ;
+						return ;
+					}
+
+					if ( errMsg || ( state && state != "ok" ) )
+					{
+						log( LOG_LEVEL.DEBUG,
+							`Response error for ${ label }: ${ errMsg || state || "unknown" }`,
+						);
+						continue ;
+					}
+
+					log( LOG_LEVEL.INFO, `Override: ${ label }` ) ;
+					this.failoverModel = model ;
+					return ;
+				}
+				catch ( err )
+				{
+					log( LOG_LEVEL.DEBUG, `Prompt threw for ${ label }: ${ ( err as Error )?.message ?? String( err ) }` ) ;
+				}
 			}
-			catch ( err )
+
+			this.failoverModel = null ;
+			log( LOG_LEVEL.INFO, "Chain models exhausted" ) ;
+
+			await this.client.session.abort( { path : { id : sessionID } } ).catch( () => {} ) ;
+
+			await this.client.session.prompt( {
+				path : { id : sessionID },
+				body : {
+					parts : [
+						// ignored: UI-only notification, NOT sent to model
+						{ type : "text", text : "❌ Failover chain exhausted.", ignored : true },
+					],
+				},
+			} ).catch( ( err ) =>
 			{
-				log( LOG_LEVEL.DEBUG, `Prompt threw for ${ label }: ${ ( err as Error )?.message ?? String( err ) }` ) ;
-			}
+				log( LOG_LEVEL.DEBUG, `Exhausted prompt error for ${ sessionID }: ${ ( err as Error )?.message ?? "unknown" }` ) ;
+			} );
+		}
+		finally
+		{
+			this.isBusy = false ;
+		}
+	}
+
+	// ── Public hooks ──────────────────────────────────────────────────────
+
+	// Handle session events: session.deleted → dispose, session.status (retry) → failover, session.error → failover
+	public async onEvent( { event } : { event : SessionEvent } ) : Promise< void >
+	{
+		if ( event.type == "session.deleted" )
+	{
+		this.dispose() ;
+		return ;
+	}
+
+		if ( event.type == "session.status" && event.properties?.status?.type == "retry" )
+		{
+			const sid = event.properties?.sessionID ;
+
+			if ( ! sid ) return ;
+			if ( this.isBusy || this.failoverModel ) return ;
+
+			this.sessionID = sid ;
+			log( LOG_LEVEL.DEBUG, `Cascade retry ${ sid }` ) ;
+
+			await this.failover( sid ) ;
+			return ;
 		}
 
-		STATE.failoverModel = null ;
-		log( LOG_LEVEL.INFO, "Chain models exhausted" ) ;
+		if ( event.type != "session.error" ) return ;
 
-		await client.session.abort( { path : { id : sessionID } } ).catch( () => {} ) ;
+		const err = event.properties?.error ;
+		if ( err?.name == "MessageAbortedError" ) return ;
 
-		await client.session.prompt( {
-			path : { id : sessionID },
-			body : {
-				parts : [
-					// ignored: UI-only notification, NOT sent to model
-					{ type : "text", text : "❌ Failover chain exhausted.", ignored : true },
-				],
-			},
-		} ).catch( ( err ) =>
-		{
-			log( LOG_LEVEL.DEBUG, `Exhausted prompt error for ${ sessionID }: ${ ( err as Error )?.message ?? "unknown" }` ) ;
-		} );
-	}
-	finally
-	{
-		STATE.isBusy = false ;
-	}
-}
-
-// ─── Hooks ─────────────────────────────────────────────────────────────────
-
-// Handle session events: session.deleted → reset, session.status (retry) → failover, session.error → failover
-async function onEvent( { event } : { event : SessionEvent }, client : PluginInput[ "client" ] ) : Promise< void >
-{
-	if ( event.type == "session.deleted" )
-	{
-		reset() ;
-		return ;
-	}
-
-	if ( event.type == "session.status" && event.properties?.status?.type == "retry" )
-	{
 		const sid = event.properties?.sessionID ;
-
 		if ( ! sid ) return ;
-		if ( STATE.isBusy || STATE.failoverModel ) return ;
 
-		STATE.sessionID = sid ;
-		log( LOG_LEVEL.DEBUG, `Cascade retry ${ sid }` ) ;
+		const sc = err?.data?.statusCode ;
 
-		await failover( sid, client ) ;
-		return ;
+		if ( this.isBusy ) return ;
+
+		if ( this.failoverModel && sid === this.sessionID )
+		{
+			log( LOG_LEVEL.DEBUG, `Stale skip: ${ sc ?? "?" } (override active)` ) ;
+			return ;
+		}
+
+		this.sessionID = sid ;
+
+		log( LOG_LEVEL.ERROR,
+			`Fail: ${ this.originalModel?.providerID ?? "?" }/${ this.originalModel?.modelID ?? "?" } — ${ sc }`,
+		);
+
+		await this.failover( sid ) ;
 	}
 
-	if ( event.type != "session.error" ) return ;
-
-	const err = event.properties?.error ;
-	if ( err?.name == "MessageAbortedError" ) return ;
-
-	const sid = event.properties?.sessionID ;
-	if ( ! sid ) return ;
-
-	const sc = err?.data?.statusCode ;
-
-	if ( STATE.isBusy ) return ;
-
-	if ( STATE.failoverModel && sid === STATE.sessionID )
+	// Intercept chat.message to track original model and inject failover model override
+	public onChatMessage( input : ChatInput, output : ChatOutput ) : void
 	{
-		log( LOG_LEVEL.DEBUG, `Stale skip: ${ sc ?? "?" } (override active)` ) ;
-		return ;
+		if ( ! input.sessionID ) return ;
+		if ( this.isBusy ) return ;
+
+		this.sessionID = input.sessionID ;
+
+		const sel = input.model ;
+
+		if ( ! sel?.providerID || ! sel?.modelID ) return ;
+
+		if ( ! this.originalModel )
+		{
+			this.originalModel = {
+				providerID : sel.providerID,
+				modelID    : sel.modelID,
+				variant    : sel.variant,
+			};
+
+			log( LOG_LEVEL.INFO, `Current model: ${ this.originalModel.providerID }/${ this.originalModel.modelID }` ) ;
+		}
+
+		const orig = this.originalModel ;
+
+		if ( orig && ( sel.providerID != orig.providerID || sel.modelID != orig.modelID || sel.variant != orig.variant ) )
+		{
+			this.failoverModel = null ;
+			this.originalModel = {
+				providerID : sel.providerID,
+				modelID    : sel.modelID,
+				variant    : sel.variant,
+			};
+
+			log( LOG_LEVEL.INFO, `Model changed: ${ this.originalModel.providerID }/${ this.originalModel.modelID }` ) ;
+			return ;
+		}
+
+		if ( ! this.failoverModel || ! output?.message?.model ) return ;
+
+		output.message.model = { ...this.failoverModel } ;
 	}
 
-	STATE.sessionID = sid ;
-
-	log( LOG_LEVEL.ERROR,
-		`Fail: ${ STATE.originalModel?.providerID ?? "?" }/${ STATE.originalModel?.modelID ?? "?" } — ${ sc }`,
-	);
-
-	await failover( sid, client ) ;
-}
-
-// Intercept chat.message to track original model and inject failover model override
-function onChatMessage( input : ChatInput, output : ChatOutput ) : void
-{
-	if ( ! input.sessionID ) return ;
-	if ( STATE.isBusy ) return ;
-
-	STATE.sessionID = input.sessionID ;
-
-	const sel = input.model ;
-
-	if ( ! sel?.providerID || ! sel?.modelID ) return ;
-
-	if ( ! STATE.originalModel )
+	// Dispose: clear all session state: sessionID, original/failover model, busy flag
+	public dispose() : void
 	{
-		STATE.originalModel = {
-			providerID : sel.providerID,
-			modelID    : sel.modelID,
-			variant    : sel.variant,
-		};
+		this.sessionID     = null ;
+		this.originalModel = null ;
+		this.failoverModel = null ;
+		this.isBusy        = false ;
 
-		log( LOG_LEVEL.INFO, `Current model: ${ STATE.originalModel.providerID }/${ STATE.originalModel.modelID }` ) ;
+		log( LOG_LEVEL.INFO, "Disposed" ) ;
 	}
-
-	const orig = STATE.originalModel ;
-
-	if ( orig && ( sel.providerID != orig.providerID || sel.modelID != orig.modelID || sel.variant != orig.variant ) )
-	{
-		STATE.failoverModel = null ;
-		STATE.originalModel = {
-			providerID : sel.providerID,
-			modelID    : sel.modelID,
-			variant    : sel.variant,
-		};
-
-		log( LOG_LEVEL.INFO, `Model changed: ${ STATE.originalModel.providerID }/${ STATE.originalModel.modelID }` ) ;
-		return ;
-	}
-
-	if ( ! STATE.failoverModel || ! output?.message?.model ) return ;
-
-	output.message.model = { ...STATE.failoverModel } ;
-}
-
-// Reset all session state: sessionID, original/failover model, busy flag
-function reset() : void
-{
-	STATE.sessionID     = null ;
-	STATE.originalModel = null ;
-	STATE.failoverModel = null ;
-	STATE.isBusy        = false ;
-
-	log( LOG_LEVEL.INFO, "Disposed" ) ;
 }
 
 // ─── Plugin ────────────────────────────────────────────────────────────────
 
-// Plugin factory: load config, register event/chat.message/dispose hooks
+// Plugin factory: load config, build ModelFailover, register event/chat.message/dispose hooks
 export default ( async ( { client } : PluginInput ) =>
 {
 	const opts = loadConfig() ;
@@ -424,14 +419,16 @@ export default ( async ( { client } : PluginInput ) =>
 		return {} ;
 	}
 
+	const mf = new ModelFailover( opts, client ) ;
+
 	return {
 		// Hook: intercept session events for failover logic
-		event : ( e : { event : SessionEvent } ) => onEvent( e, client ),
+		event : ( e : { event : SessionEvent } ) => mf.onEvent( e ),
 		// Hook: intercept messages to inject failover model
-		"chat.message" : onChatMessage,
-		// Cleanup: reset all state
-		dispose : reset,
-	};
+		"chat.message" : ( i : ChatInput, o : ChatOutput ) => mf.onChatMessage( i, o ),
+		// Cleanup: clear all state
+		dispose : () => mf.dispose(),
+	} ;
 } ) satisfies Plugin ;
 
 // ─── END ──────────────────────────────────────────────────────────────
