@@ -56,7 +56,17 @@ flowchart TD
     style L fill:#1a1a2e,stroke:#e94560,color:#fff
 ```
 
-## 🚀 Install
+## 🎯 Use cases
+
+**Model down mid-task.** You're halfway through a refactor and the model throws a 500. The conversation never breaks stride — a backup model steps in and the task keeps moving.
+
+**Long unattended runs.** You start a big build-and-fix loop and step away. If a model fails while you're gone, the chain keeps walking instead of stalling the whole job.
+
+**Provider outage.** Your main provider has a bad hour. Traffic shifts to the backup automatically, and the session rides out the outage.
+
+**Graceful last resort.** Every model in the chain fails. Instead of a silent dead end, you get a clear message that the chain is exhausted and can take over manually.
+
+## 🚀 Installation
 
 ```bash
 cp model-failover.ts ~/.config/opencode/plugins/model-failover.ts
@@ -106,6 +116,14 @@ tail -f ~/.config/opencode/model-failover.log
 [2026-07-05T10:45:00] [DEBUG]: Prompt aborted for opencode/deepseek-v4-pro, stopping cascade
 [2026-07-05T10:50:00] [DEBUG]: Stale skip: 304 (override active)
 ```
+
+## 🔌 Plugin hooks
+
+| Hook | Purpose |
+|---|---|
+| `event` | listens for `session.error`, `session.status` (retry) and `session.deleted`; triggers failover or cleanup |
+| `chat.message` | overrides the active model with the failover pick after a cascade |
+| `dispose` | resets all failover state |
 
 ## 📖 Behavior
 

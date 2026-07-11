@@ -21,7 +21,7 @@
 *	}
 *
 *	@name model-failover
- *	@version 1.0.40
+*	@version 1.0.40
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -106,7 +106,7 @@ interface ChatOutput
 	message? : { model? : ParsedModel } ;
 }
 
-// ─── Global Helpers ──────────────────────────────────────────────────────────
+// ─── Helpers ────────────────────────────────────────────────────────────────
 
 // Current local datetime as ISO-like string: "2026-07-06T20:30:26"
 function timestamp() : string
