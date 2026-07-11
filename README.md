@@ -1,6 +1,6 @@
 # Model Failover (never stop)
 
-![Version](https://img.shields.io/badge/version-1.0.35-blue)
+![Version](https://img.shields.io/badge/version-1.0.38-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![OpenCode](https://img.shields.io/badge/OpenCode-plugin-purple)
 
@@ -32,7 +32,7 @@ flowchart TD
     B -->|"❌ No"| D["🛑 Start failover()"]
 
     D --> E{"Next model<br/>in chain?"}
-    E -->|"✅ Yes"| F["❌ Abort session<br/>→ wait 3s"]
+    E -->|"✅ Yes"| F["❌ Abort session<br/>→ 1s pre + 1s post wait"]
     F --> G["💬 Prompt 'Continue.'<br/>with &lt;model&gt;"]
     G --> H{"Response OK?"}
     H -->|"✅ Yes"| I["✏️ Override model<br/>(chat.message hook)"]
@@ -73,7 +73,7 @@ Copy `model-failover.jsonc` (included in this repo) to `~/.config/opencode/` and
 	"enabled": true,
 	"chain":
 	[
-		{ "model": "opencode-go/deepseek-v4-flash", "variant": "max" },
+		{ "model": "opencode-zen/hy3-free", "variant": "max" },
 		{ "model": "opencode-go/deepseek-v4-pro", "variant": "medium" },
 		{ "model": "deepseek/deepseek-v4-flash-free", "variant": "max" }
 	],
@@ -97,10 +97,10 @@ tail -f ~/.config/opencode/model-failover.log
 
 ```log
 [2026-07-05T10:30:00] [INFO]: Config loaded
-[2026-07-05T10:30:01] [INFO]: Loaded: 3 models, enabled: true
-[2026-07-05T10:35:22] [INFO]: Trying 0: opencode-go/deepseek-v4-flash
-[2026-07-05T10:35:25] [INFO]: Override: opencode-go/deepseek-v4-flash
-[2026-07-05T10:36:00] [INFO]: Current model: opencode-go/deepseek-v4-flash
+[2026-07-05T10:30:01] [INFO]: Loaded: 3 models
+[2026-07-05T10:35:22] [INFO]: Trying 0: opencode-zen/hy3-free
+[2026-07-05T10:35:25] [INFO]: Override: opencode-zen/hy3-free:max
+[2026-07-05T10:36:00] [INFO]: Current model: opencode-zen/hy3-free
 [2026-07-05T10:40:00] [INFO]: Trying 1: opencode-go/deepseek-v4-pro
 [2026-07-05T10:40:00] [INFO]: Chain models exhausted
 [2026-07-05T10:45:00] [DEBUG]: Prompt aborted for opencode-go/deepseek-v4-pro, stopping cascade
@@ -120,6 +120,8 @@ tail -f ~/.config/opencode/model-failover.log
 
 ## 💬 Notes
 
+- Failover prompts use `synthetic: true` for model-facing text and `ignored: true` for UI-only notifications.
+
 Less is more. :)
 
 ## 👤 Authors
@@ -129,4 +131,4 @@ Less is more. :)
 
 ## 📄 License
 
-MIT — version 1.0.35
+MIT — version 1.0.38

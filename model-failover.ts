@@ -12,15 +12,15 @@
 *		"enabled": true,
 *		"chain":
 *		[
-*			{ "model": "opencode-go/deepseek-v4-flash", "variant": "max" },
-*			{ "model": "opencode-go/deepseek-v4-pro", "variant": "medium" },
+*			{ "model": "opencode-zen/hy3-free", "variant": "high" },
+*			{ "model": "opencode-go/deepseek-v4-pro", "variant": "high" },
 *			{ "model": "deepseek/deepseek-v4-flash-free", "variant": "max" },
 *		],
 *		"log_level": "info",    // "silent" | "error" | "info" | "debug"
 *	}
 *
 *	@name model-failover
-*	@version 1.0.37
+*	@version 1.0.38
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -136,13 +136,12 @@ function timestamp() : string
 }
 
 // Load config from ~/.config/opencode/model-failover.json, fall back to defaults
-function loadConfig()
+function loadConfig() : typeof CONFIG
 {
 	let file : Record<string, unknown> = {} ;
 	try
 	{
 		file = Bun.JSONC.parse( readFileSync( CONFIG_FILE, "utf-8" ) ) ;
-		log( LOG_LEVEL.INFO, "Config loaded" ) ;
 	}
 	catch
 	{
@@ -153,19 +152,15 @@ function loadConfig()
 		? file.chain.filter( ( e : any ) => typeof e?.model == "string" && e.model != "" )
 		: [] ;
 
-	const opts =
-	{
-		enabled   : file.enabled    ?? CONFIG.enabled,
-		log_level : file.log_level  ?? CONFIG.log_level,
-		chain     : chain,
-	} as typeof CONFIG ;
+	// Validate between file values and defaults values.
+	CONFIG.enabled    = file.enabled    ?? CONFIG.enabled ;
+	CONFIG.chain      = chain           ?? CONFIG.chain ;
+	CONFIG.log_level  = file.log_level  ?? CONFIG.log_level ;
 
-	CONFIG.log_level = opts.log_level ;
-	STATE.config     = opts ;
+	log( LOG_LEVEL.INFO, "Config loaded" ) ;
+	log( LOG_LEVEL.INFO, `Loaded: ${ CONFIG.chain.length } models` ) ;
 
-	log( LOG_LEVEL.INFO, `Loaded: ${ chain.length } models, enabled: ${ opts.enabled }` ) ;
-
-	return opts ;
+	return CONFIG ;
 }
 
 // Append timestamped entry to ~/.config/opencode/model-failover.log
@@ -241,8 +236,10 @@ async function failover( sessionID : string, client : PluginInput[ "client" ] ) 
 					body : {
 						model,
 						parts : [
+							// ignored: UI-only notification, NOT sent to model
 							{ type : "text", text : `✅ Failover to [${ label }]`, ignored : true },
-							{ type : "text", text : "Continue." },
+							// synthetic: system-generated, sent to model
+							{ type : "text", text : "Continue.", synthetic: true },
 						],
 					},
 				} );
@@ -289,7 +286,11 @@ async function failover( sessionID : string, client : PluginInput[ "client" ] ) 
 			path : { id : sessionID },
 			body : {
 				parts : [
-					{ type : "text", text : "❌ Failover chain exhausted." },
+					{
+						type : "text", text : "❌ Failover chain exhausted.",
+						// synthetic+ignored: UI notification only
+						synthetic: true, ignored : true
+					},
 				],
 			},
 		} ).catch( ( err ) =>
@@ -411,6 +412,7 @@ function reset() : void
 
 // ─── Plugin ────────────────────────────────────────────────────────────────
 
+// Plugin factory: load config, register event/chat.message/dispose hooks
 export default ( async ( { client } : PluginInput ) =>
 {
 	const opts = loadConfig() ;
