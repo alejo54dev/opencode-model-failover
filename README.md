@@ -73,8 +73,8 @@ Copy `model-failover.jsonc` (included in this repo) to `~/.config/opencode/` and
 	"enabled": true,
 	"chain":
 	[
-		{ "model": "opencode-zen/hy3-free", "variant": "max" },
-		{ "model": "opencode-go/deepseek-v4-pro", "variant": "medium" },
+		{ "model": "opencode/hy3-free", "variant": "max" },
+		{ "model": "opencode/deepseek-v4-pro", "variant": "medium" },
 		{ "model": "deepseek/deepseek-v4-flash-free", "variant": "max" }
 	],
 	"log_level": "info"     // "silent" | "error" | "info" | "debug"
@@ -98,12 +98,12 @@ tail -f ~/.config/opencode/model-failover.log
 ```log
 [2026-07-05T10:30:00] [INFO]: Config loaded
 [2026-07-05T10:30:01] [INFO]: Loaded: 3 models
-[2026-07-05T10:35:22] [INFO]: Trying 0: opencode-zen/hy3-free
-[2026-07-05T10:35:25] [INFO]: Override: opencode-zen/hy3-free:max
-[2026-07-05T10:36:00] [INFO]: Current model: opencode-zen/hy3-free
-[2026-07-05T10:40:00] [INFO]: Trying 1: opencode-go/deepseek-v4-pro
+[2026-07-05T10:35:22] [INFO]: Trying 0: opencode/hy3-free
+[2026-07-05T10:35:25] [INFO]: Override: opencode/hy3-free:max
+[2026-07-05T10:36:00] [INFO]: Current model: opencode/hy3-free
+[2026-07-05T10:40:00] [INFO]: Trying 1: opencode/deepseek-v4-pro
 [2026-07-05T10:40:00] [INFO]: Chain models exhausted
-[2026-07-05T10:45:00] [DEBUG]: Prompt aborted for opencode-go/deepseek-v4-pro, stopping cascade
+[2026-07-05T10:45:00] [DEBUG]: Prompt aborted for opencode/deepseek-v4-pro, stopping cascade
 [2026-07-05T10:50:00] [DEBUG]: Stale skip: 304 (override active)
 ```
 

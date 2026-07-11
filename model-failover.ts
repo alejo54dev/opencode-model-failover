@@ -12,9 +12,11 @@
 *		"enabled": true,
 *		"chain":
 *		[
-*			{ "model": "opencode-zen/hy3-free", "variant": "high" },
-*			{ "model": "opencode-go/deepseek-v4-pro", "variant": "high" },
-*			{ "model": "deepseek/deepseek-v4-flash-free", "variant": "max" },
+*			{ "model": "opencode/hy3-free", "variant": "high" },
+*			{ "model": "opencode/north-mini-code-free", "variant": "high" },
+*			{ "model": "opencode/deepseek-v4-flash-free", "variant": "max" },
+*			{ "model": "deepseek/deepseek-v4-flash", "variant": "max" },
+*			{ "model": "deepseek/deepseek-v4-pro", "variant": "high" },
 *		],
 *		"log_level": "info",    // "silent" | "error" | "info" | "debug"
 *	}
@@ -157,6 +159,8 @@ function loadConfig() : typeof CONFIG
 	CONFIG.chain      = chain           ?? CONFIG.chain ;
 	CONFIG.log_level  = file.log_level  ?? CONFIG.log_level ;
 
+	STATE.config = CONFIG ;
+
 	log( LOG_LEVEL.INFO, "Config loaded" ) ;
 	log( LOG_LEVEL.INFO, `Loaded: ${ CONFIG.chain.length } models` ) ;
 
@@ -286,11 +290,8 @@ async function failover( sessionID : string, client : PluginInput[ "client" ] ) 
 			path : { id : sessionID },
 			body : {
 				parts : [
-					{
-						type : "text", text : "❌ Failover chain exhausted.",
-						// synthetic+ignored: UI notification only
-						synthetic: true, ignored : true
-					},
+					// ignored: UI-only notification, NOT sent to model
+					{ type : "text", text : "❌ Failover chain exhausted.", ignored : true },
 				],
 			},
 		} ).catch( ( err ) =>
