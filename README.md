@@ -117,14 +117,6 @@ tail -f ~/.config/opencode/model-failover.log
 [2026-07-05T10:50:00] [DEBUG]: Stale skip: 304 (override active)
 ```
 
-## 🔌 Plugin hooks
-
-| Hook | Purpose |
-|---|---|
-| `event` | listens for `session.error`, `session.status` (retry) and `session.deleted`; triggers failover or cleanup |
-| `chat.message` | overrides the active model with the failover pick after a cascade |
-| `dispose` | resets all failover state |
-
 ## 📖 Behavior
 
 | Event | Reaction |
