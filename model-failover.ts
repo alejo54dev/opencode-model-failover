@@ -70,13 +70,6 @@ interface ParsedModel
 	variant?   : string ;
 }
 
-interface Config
-{
-	enabled   : boolean ;
-	chain     : ChainEntry[ ] ;
-	log_level : string ;
-}
-
 interface SessionError
 {
 	name? : string ;
@@ -164,7 +157,6 @@ function log( level : number, message : string ) : void
 
 // ─── ModelFailover ──────────────────────────────────────────────────────────
 
-// Controller class: holds all failover state and logic (replaces module-level STATE).
 class ModelFailover
 {
 	private config        : typeof CONFIG ;
