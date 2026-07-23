@@ -21,7 +21,7 @@
 *	}
 *
 *	@name model-failover
-*	@version 1.1.22
+*	@version 1.1.23
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -216,8 +216,6 @@ class ModelFailover
 
 				log( LOG_LEVEL.INFO, `Trying ${ i }: ${ label }` ) ;
 				await this.client.session.abort( { path : { id : sessionID } } ).catch( () => {} ) ;
-
-				await new Promise( r => setTimeout( r, 1000 ) ) ; // post wait
 
 				try
 				{
