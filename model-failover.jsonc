@@ -2,8 +2,7 @@
 	"enabled": true,
 	"chain":
 	[
-		{ "model": "poolside/poolside/laguna-xs-2.1", "variant": "high" },
-		{ "model": "openrouter/cohere/north-mini-code:free", "variant": "high" },
+		{ "model": "nvidia/deepseek-ai/deepseek-v4-flash", "variant": "max" },
 		{ "model": "opencode/deepseek-v4-flash-free", "variant": "max" },
 		{ "model": "openrouter/openrouter/free", "variant": "high" },
 		{ "model": "deepseek/deepseek-v4-flash", "variant": "max" },

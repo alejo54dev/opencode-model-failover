@@ -83,11 +83,12 @@ Copy `model-failover.jsonc` (included in this repo) to `~/.config/opencode/` and
 	"enabled": true,
 	"chain":
 	[
-		{ "model": "opencode/hy3-free", "variant": "max" },
-		{ "model": "opencode/deepseek-v4-pro", "variant": "medium" },
-		{ "model": "deepseek/deepseek-v4-flash-free", "variant": "max" }
+		{ "model": "nvidia/deepseek-ai/deepseek-v4-flash", "variant": "max" },
+		{ "model": "opencode/deepseek-v4-flash-free", "variant": "max" },
+		{ "model": "openrouter/openrouter/free", "variant": "high" },
+		{ "model": "deepseek/deepseek-v4-flash", "variant": "max" },
 	],
-	"log_level": "info"     // "silent" | "error" | "info" | "debug"
+	"log_level": "info",    // "silent" | "error" | "info" | "debug"
 }
 ```
 
