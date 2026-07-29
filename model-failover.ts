@@ -21,7 +21,7 @@
 *	}
 *
 *	@name model-failover
-*	@version 1.1.23
+*	@version 1.1.24
 *	@author Alejandro Carraretto
 *	@author DeepSeek-V4
 *	@license MIT
@@ -227,7 +227,7 @@ class ModelFailover
 								// ignored: UI-only notification, NOT sent to model
 								{ type : "text", text : `✅ Failover to [${ label }]`, ignored : true },
 								// synthetic: system-generated, sent to model
-								{ type : "text", text : "Continue.", synthetic: true },
+								{ type : "text", text : "Continue.", synthetic : true },
 							],
 						},
 					} );
@@ -399,17 +399,17 @@ class ModelFailover
 // ─── Plugin ────────────────────────────────────────────────────────────────
 
 // Plugin factory: load config, build ModelFailover, register event/chat.message/dispose hooks
-export default ( async ( { client } : PluginInput ) =>
+export default ( async ( ctx : PluginInput ) =>
 {
 	const opts = loadConfig() ;
 
-	if ( !opts.enabled )
+	if ( ! opts.enabled )
 	{
 		log( LOG_LEVEL.INFO, "Disabled" ) ;
 		return {} ;
 	}
 
-	const mf = new ModelFailover( opts, client ) ;
+	const mf = new ModelFailover( opts, ctx.client ) ;
 
 	return {
 		// Hook: intercept session events for failover logic

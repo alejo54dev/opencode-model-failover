@@ -1,6 +1,6 @@
 # Model Failover (never stop)
 
-![Version](https://img.shields.io/badge/version-1.1.23-blue)
+![Version](https://img.shields.io/badge/version-1.1.24-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![OpenCode](https://img.shields.io/badge/OpenCode-plugin-purple)
 
@@ -142,4 +142,4 @@ Less is more. :)
 
 ## 📄 License
 
-MIT — version 1.1.23
+MIT — version 1.1.24
