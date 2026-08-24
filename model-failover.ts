@@ -23,7 +23,7 @@
 *	@name model-failover
 *	@version 1.1.24
 *	@author Alejandro Carraretto
-*	@author DeepSeek-V4
+*	@assistant DeepSeek-V4
 *	@license MIT
 */
 
