@@ -1,6 +1,6 @@
 # Model Failover (never stop)
 
-![Version](https://img.shields.io/badge/version-1.1.24-blue)
+![Version](https://img.shields.io/github/v/release/alejo54dev/opencode-model-failover)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![OpenCode](https://img.shields.io/badge/OpenCode-plugin-purple)
 
