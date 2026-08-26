@@ -2,7 +2,7 @@
 
 ![Version](https://img.shields.io/badge/version-1.1.24-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![OpenCode](https://img.shields.io/badge/OpenCode-plugin-purple)
+![OpenCode v1](https://img.shields.io/badge/OpenCode-v1-purple)
 
 > You're in the middle of something important, the model fails, the task gets interrupted, you lose the thread. You have to pick another model, restart the flow. And if you leave it running and go to sleep? Time wasted, everything wrong. Not anymore!
 
