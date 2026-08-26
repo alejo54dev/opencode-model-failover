@@ -10,7 +10,7 @@
 
 > Models fail. Your conversation doesn't.
 
-- **Auto failover** — detects the error (except if you cancelled), aborts, grabs the next model, sends "Continue." You never noticed.
+- **Auto failover** — detects the error (except if you cancelled), aborts, grabs the next model, sends "Continue." You never notice.
 
 - **Smart cascade** — if the second one also fails, it moves to the third. If all fail, it says so clearly. No awkward silence.
 
@@ -18,7 +18,7 @@
 
 ## 🧠 Philosophy
 
-A dead session is murdered productivity. Model errors are expected infrastructure — you abort cleanly, pick the next one, the conversation continues.
+A dead session murders productivity. Model errors are expected infrastructure — you abort cleanly, pick the next one, the conversation continues.
 
 Not all errors are equal. `MessageAbortedError` is ignored — you cancelled, not a failover. Only real errors matter.
 
