@@ -24,8 +24,8 @@
 *	@version 1.1.24
 *	@author Alejandro Carraretto
 *	@assistant DeepSeek-V4
-*	@license MIT
- *	@compatibility OpenCode v1
+*	@license Apache-2.0
+*	@compatibility OpenCode v1
 */
 
 import type { Plugin, PluginInput } from "@opencode-ai/plugin" ;
