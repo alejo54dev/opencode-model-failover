@@ -24,7 +24,7 @@
 *	@version 1.1.24
 *	@author Alejandro Carraretto
 *	@assistant DeepSeek-V4
-*	@license Apache-2.0
+*	@license AGPL-3.0
 *	@compatibility OpenCode v1
 */
 
