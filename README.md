@@ -83,10 +83,9 @@ Copy `model-failover.jsonc` (included in this repo) to `~/.config/opencode/` and
 	"enabled": true,
 	"chain":
 	[
-		{ "model": "nvidia/deepseek-ai/deepseek-v4-flash", "variant": "max" },
-		{ "model": "opencode/deepseek-v4-flash-free", "variant": "max" },
-		{ "model": "openrouter/openrouter/free", "variant": "high" },
 		{ "model": "deepseek/deepseek-v4-flash", "variant": "max" },
+		{ "model": "poolside/poolside/laguna-s-2.1", "variant": "high" },
+		{ "model": "openrouter/openrouter/free", "variant": "high" },
 	],
 	"log_level": "info",    // "silent" | "error" | "info" | "debug"
 }
@@ -109,12 +108,12 @@ tail -f ~/.config/opencode/model-failover.log
 ```log
 [2026-07-05T10:30:00] [INFO]: Config loaded
 [2026-07-05T10:30:01] [INFO]: Loaded: 3 models
-[2026-07-05T10:35:22] [INFO]: Trying 0: opencode/hy3-free
-[2026-07-05T10:35:25] [INFO]: Override: opencode/hy3-free:max
-[2026-07-05T10:36:00] [INFO]: Current model: opencode/hy3-free
-[2026-07-05T10:40:00] [INFO]: Trying 1: opencode/deepseek-v4-pro
+[2026-07-05T10:35:22] [INFO]: Current model: opencode/hy3-free
+[2026-07-05T10:35:25] [INFO]: Trying 0: deepseek/deepseek-v4-flash:max
+[2026-07-05T10:35:27] [INFO]: Override: deepseek/deepseek-v4-flash:max
+[2026-07-05T10:36:00] [INFO]: Model changed: deepseek/deepseek-v4-flash
 [2026-07-05T10:40:00] [INFO]: Chain models exhausted
-[2026-07-05T10:45:00] [DEBUG]: Prompt aborted for opencode/deepseek-v4-pro, stopping cascade
+[2026-07-05T10:45:00] [DEBUG]: Prompt aborted for deepseek/deepseek-v4-flash, stopping cascade
 [2026-07-05T10:50:00] [DEBUG]: Stale skip: 304 (override active)
 ```
 

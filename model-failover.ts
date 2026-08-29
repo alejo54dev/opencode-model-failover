@@ -49,14 +49,21 @@ const LOG_LEVEL =
 	DEBUG  : 3,
 } as const ;
 
-const CONFIG =
+const CONFIG : Config =
 {
 	enabled   : true,
 	chain     : [] as ChainEntry[],
-	log_level : "info" as "silent" | "error" | "info" | "debug",
+	log_level : "info",
 } ;
 
 // ─── Interfaces ────────────────────────────────────────────────────────────
+
+interface Config
+{
+	enabled   : boolean ;
+	chain     : ChainEntry[] ;
+	log_level : "silent" | "error" | "info" | "debug" ;
+}
 
 interface ChainEntry
 {
@@ -113,7 +120,7 @@ function timestamp() : string
 }
 
 // Load config from ~/.config/opencode/model-failover.jsonc, fall back to defaults
-function loadConfig() : typeof CONFIG
+function loadConfig() : Config
 {
 	let file : Record<string, unknown> = {} ;
 	try
@@ -160,7 +167,7 @@ function log( level : number, message : string ) : void
 
 class ModelFailover
 {
-	private config        : typeof CONFIG ;
+	private config        : Config ;
 	private client        : PluginInput[ "client" ] ;
 	private sessionID     : string | null   = null ;
 	private originalModel : ParsedModel | null = null ;
@@ -168,7 +175,7 @@ class ModelFailover
 	private isBusy        : boolean = false ;
 
 	// Initialize: store config + client, no side effects
-	constructor( config : typeof CONFIG, client : PluginInput[ "client" ] )
+	constructor( config : Config, client : PluginInput[ "client" ] )
 	{
 		this.config = config ;
 		this.client = client ;
