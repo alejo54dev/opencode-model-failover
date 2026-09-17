@@ -21,7 +21,7 @@
 *	}
 *
 *	@name model-failover
-*	@version 1.1.24
+*	@version 1.1.26
 *	@author Alejandro Carraretto
 *	@assistant DeepSeek-V4
 *	@license AGPL-3.0
@@ -107,7 +107,7 @@ interface ChatOutput
 	message? : { model? : ParsedModel } ;
 }
 
-// ─── Helpers ────────────────────────────────────────────────────────────────
+// ─── Global Helpers ──────────────────────────────────────────────────────────
 
 // Current local datetime as ISO-like string: "2026-07-06T20:30:26"
 function timestamp() : string
@@ -122,26 +122,25 @@ function timestamp() : string
 // Load config from ~/.config/opencode/model-failover.jsonc, fall back to defaults
 function loadConfig() : Config
 {
-	let file : Record<string, unknown> = {} ;
+	let file : Partial<Config> = {} ;
+	let loaded = false ;
 	try
 	{
-		file = Bun.JSONC.parse( readFileSync( CONFIG_FILE, "utf-8" ) ) ;
+		file = Bun.JSONC.parse( readFileSync( CONFIG_FILE, "utf8" ) ) as Partial<Config> ;
+		loaded = true ;
 	}
 	catch
 	{
 		log( LOG_LEVEL.ERROR, `Config not found or parse error at ${ CONFIG_FILE }` ) ;
 	}
 
-	const chain = Array.isArray( file.chain )
-		? file.chain.filter( ( e : any ) => typeof e?.model == "string" && e.model != "" )
+	Object.assign( CONFIG, file ) ;
+
+	CONFIG.chain = Array.isArray( CONFIG.chain )
+		? CONFIG.chain.filter( ( e : any ) => typeof e?.model == "string" && e.model != "" )
 		: [] ;
 
-	// Validate between file values and defaults values.
-	CONFIG.enabled    = file.enabled    ?? CONFIG.enabled ;
-	CONFIG.chain      = chain           ?? CONFIG.chain ;
-	CONFIG.log_level  = file.log_level  ?? CONFIG.log_level ;
-
-	log( LOG_LEVEL.INFO, "Config loaded" ) ;
+	log( LOG_LEVEL.INFO, loaded ? "Config loaded" : "Config loaded (defaults)" ) ;
 	log( LOG_LEVEL.INFO, `Loaded: ${ CONFIG.chain.length } models` ) ;
 
 	return CONFIG ;
