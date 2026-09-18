@@ -27,12 +27,12 @@ Not all errors are equal. `MessageAbortedError` is ignored — you cancelled, no
 ```mermaid
 flowchart TD
     A["⚠️ session.error /<br/>session.status (retry)"]
-    A --> B{"MessageAbortedError<br/>or isBusy or stale?"}
+    A --> B{"isBusy / stale?<br/>MessageAbortedError (error only)"}
     B -->|"✅ Yes"| C["⏭️ Skip / ignore"]
     B -->|"❌ No"| D["🛑 Start failover()"]
 
     D --> E{"Next model<br/>in chain?"}
-    E -->|"✅ Yes"| F["❌ Abort session<br/>→ 1s pre + 1s post wait"]
+    E -->|"✅ Yes"| F["❌ Abort session<br/>→ 1s pre-abort wait"]
     F --> G["💬 Prompt 'Continue.'<br/>with &lt;model&gt;"]
     G --> H{"Response OK?"}
     H -->|"✅ Yes"| I["✏️ Override model<br/>(chat.message hook)"]
@@ -40,7 +40,7 @@ flowchart TD
     E -->|"❌ Exhausted"| J["❌ Chain exhausted<br/>→ send message"]
 
     K["🛑 session.deleted"]
-    K --> L["🧹 reset()"]
+    K --> L["🧹 dispose()"]
 
     style A fill:#16213e,stroke:#e94560,color:#fff
     style B fill:#16213e,stroke:#e94560,color:#fff
@@ -83,7 +83,7 @@ Copy `model-failover.jsonc` (included in this repo) to `~/.config/opencode/` and
 	"enabled": true,
 	"chain":
 	[
-		{ "model": "deepseek/deepseek-v4-flash", "variant": "max" },
+		{ "model": "deepseek/deepseek-flash", "variant": "max" },
 		{ "model": "poolside/poolside/laguna-s-2.1", "variant": "high" },
 		{ "model": "openrouter/openrouter/free", "variant": "high" },
 	],
@@ -99,7 +99,7 @@ Copy `model-failover.jsonc` (included in this repo) to `~/.config/opencode/` and
 
 ## 🪵 Logs
 
-`~/.config/opencode/model-failover.log` (append-only). Format: `[TIMESTAMP] [LEVEL] message`.
+`~/.config/opencode/model-failover.log` (append-only). Format: `[TIMESTAMP] [LEVEL]: message`.
 
 ```bash
 tail -f ~/.config/opencode/model-failover.log
@@ -109,11 +109,11 @@ tail -f ~/.config/opencode/model-failover.log
 [2026-07-05T10:30:00] [INFO]: Config loaded
 [2026-07-05T10:30:01] [INFO]: Loaded: 3 models
 [2026-07-05T10:35:22] [INFO]: Current model: opencode/hy3-free
-[2026-07-05T10:35:25] [INFO]: Trying 0: deepseek/deepseek-v4-flash:max
-[2026-07-05T10:35:27] [INFO]: Override: deepseek/deepseek-v4-flash:max
-[2026-07-05T10:36:00] [INFO]: Model changed: deepseek/deepseek-v4-flash
+[2026-07-05T10:35:25] [INFO]: Trying 0: deepseek/deepseek-flash:max
+[2026-07-05T10:35:27] [INFO]: Override: deepseek/deepseek-flash:max
+[2026-07-05T10:36:00] [INFO]: Model changed: deepseek/deepseek-flash
 [2026-07-05T10:40:00] [INFO]: Chain models exhausted
-[2026-07-05T10:45:00] [DEBUG]: Prompt aborted for deepseek/deepseek-v4-flash, stopping cascade
+[2026-07-05T10:45:00] [DEBUG]: Prompt aborted for deepseek/deepseek-flash, stopping cascade
 [2026-07-05T10:50:00] [DEBUG]: Stale skip: 304 (override active)
 ```
 
@@ -122,10 +122,11 @@ tail -f ~/.config/opencode/model-failover.log
 | Event | Reaction |
 |---|---|
 | `session.error` (any status code) | Immediate failover — abort session, pick next model, re-prompt with "Continue." |
-| Error during failover cascade | Logged and advances to the next model in the chain. Stale `session.error` events dropped by `isBusy` guard. |
+| `session.status` with `status.type == "retry"` | Same failover path — skipped while busy or when an override is already active for the session. |
+| Error during failover cascade | Logged and advances to the next model in the chain. Stale `session.error` events dropped by the `isBusy` guard or when a `failoverModel` is already set for the session. |
 | `MessageAbortedError` | Ignored. |
 | Failover `prompt()` fails | Error logged, cascade advances to the next model. |
-| Chain exhausted | "❌ Failover chain exhausted" sent to session. |
+| Chain exhausted | "❌ Failover chain exhausted." sent to session (ignored UI notice). |
 | User switches model via `/models` | Respects user's choice; next `session.error` restarts cascade from the beginning. |
 
 ## 💬 Notes

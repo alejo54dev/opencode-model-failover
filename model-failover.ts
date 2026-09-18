@@ -14,7 +14,7 @@
 *		[
 *			{ "model": "opencode/hy3-free", "variant": "high" },
 *			{ "model": "opencode/deepseek-v4-flash-free", "variant": "max" },
-*			{ "model": "deepseek/deepseek-v4-flash", "variant": "max" },
+*			{ "model": "deepseek/deepseek-flash", "variant": "max" },
 *			{ "model": "deepseek/deepseek-v4-pro", "variant": "high" },
 *		],
 *		"log_level": "info",    // "silent" | "error" | "info" | "debug"
@@ -124,6 +124,7 @@ function loadConfig() : Config
 {
 	let file : Partial<Config> = {} ;
 	let loaded = false ;
+
 	try
 	{
 		file = Bun.JSONC.parse( readFileSync( CONFIG_FILE, "utf8" ) ) as Partial<Config> ;
