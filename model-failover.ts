@@ -334,7 +334,7 @@ class ModelFailover
 
 		if ( this.isBusy ) return ;
 
-		if ( this.failoverModel && sid === this.sessionID )
+		if ( this.failoverModel && sid == this.sessionID )
 		{
 			log( LOG_LEVEL.DEBUG, `Stale skip: ${ sc ?? "?" } (override active)` ) ;
 			return ;
