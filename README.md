@@ -85,7 +85,8 @@ Copy `model-failover.jsonc` (included in this repo) to `~/.config/opencode/` and
 	[
 		{ "model": "deepseek/deepseek-flash", "variant": "max" },
 		{ "model": "poolside/poolside/laguna-s-2.1", "variant": "high" },
-		{ "model": "openrouter/openrouter/free", "variant": "high" },
+		{ "model": "nvidia/nvidia/nemotron-3-super-120b-a12b" },
+		{ "model": "openrouter/nvidia/nemotron-3-super-120b-a12b:free" }
 	],
 	"log_level": "info",    // "silent" | "error" | "info" | "debug"
 }
